@@ -9,6 +9,7 @@
  *   3. First-order Markov transition (what tends to follow the last pattern)
  */
 
+/** 形态从左到右：百位 → 十位 → 个位（例：338 = 3上·3上·8下 = 上上下） */
 export const PATTERN_LABELS = [
   '上上上', '上上下', '上下上', '上下下',
   '下上上', '下上下', '下下上', '下下下',
@@ -28,8 +29,13 @@ const OMI_WEIGHT = 0.6
 
 // ── Category helpers ──────────────────────────────────────────────────────────
 
+/** 百→十→个 逐位编码；0–4=上，5–9=下 */
 export function patternIdxOf(draw) {
   return draw.digits.reduce((acc, d) => acc * 2 + (d >= 5 ? 1 : 0), 0)
+}
+
+export function patternLabelOfDigits(digits) {
+  return PATTERN_LABELS[patternIdxOf({ digits })]
 }
 
 export function oeCatOf(draw) {
@@ -237,6 +243,329 @@ function recentStreakPenalty(draws) {
   return penalty
 }
 
+// ── 8 / 16 天窗口预测（与上下形态、奇偶比图表一致）────────────────────────────
+
+import {
+  buildCombinationFrequency,
+  comboAppearCount,
+  comboCountBandFromFreq,
+  isComboCountInBand,
+  comboCountBandFit,
+} from './combinationFrequency.js'
+
+const CHART_OMI_WEIGHT = 0.6
+/** 每位数字出现次数占历史总期数的 1/4～3/4（排除极冷极热） */
+const FREQ_BAND_MIN = 0.25
+const FREQ_BAND_MAX = 0.75
+
+const W_PATTERN = 0.45
+const W_OE = 0.30
+const W_SUM = 0.25
+
+/** 单窗口内各类别预测概率（%），逻辑同 UpDownChart / OddEvenChart */
+function windowCategoryPredictedPct(draws, days, numCats, categoryFn, gapsFn, refDate) {
+  const { counts, total } = windowCounts(draws, days, numCats, categoryFn, refDate)
+  if (total === 0) {
+    return { probs: new Array(numCats).fill(100 / numCats), total: 0 }
+  }
+  const gaps = Array.from({ length: numCats }, (_, i) => gapsFn(draws, i))
+  const maxGap = Math.max(...gaps, 1)
+  const avg = total / numCats
+  const raws = counts.map((c, i) => {
+    const base = Math.max(0.05, 2 * avg - c)
+    return base * (1 + CHART_OMI_WEIGHT * (gaps[i] / maxGap))
+  })
+  const sumRaw = raws.reduce((a, b) => a + b, 0)
+  return {
+    probs: raws.map((r) => (sumRaw > 0 ? (r / sumRaw) * 100 : 100 / numCats)),
+    total,
+  }
+}
+
+function topFromWindowProbs(probs, labels) {
+  let bestI = 0
+  for (let i = 1; i < probs.length; i++) {
+    if (probs[i] > probs[bestI]) bestI = i
+  }
+  return { i: bestI, p: probs[bestI], label: labels[bestI] }
+}
+
+/** 近 8 天 vs 近 16 天：取峰值概率更高的窗口及其最优类别 */
+function pickBestWindowCategory(draws, numCats, categoryFn, gapsFn, refDate, labels) {
+  const w8 = windowCategoryPredictedPct(draws, 8, numCats, categoryFn, gapsFn, refDate)
+  const w16 = windowCategoryPredictedPct(draws, 16, numCats, categoryFn, gapsFn, refDate)
+  const top8 = topFromWindowProbs(w8.probs, labels)
+  const top16 = topFromWindowProbs(w16.probs, labels)
+  if (top8.p >= top16.p) return { ...top8, window: 8, windowProbs: w8.probs }
+  return { ...top16, window: 16, windowProbs: w16.probs }
+}
+
+/** 和值均值回归：近 8/16 期相对均线的偏离，选偏离更大窗口并预测向均线回归 */
+function sumMeanReversionTarget(draws) {
+  const n = draws.length
+  const maLen = Math.min(30, n)
+  const maSlice = draws.slice(n - maLen)
+  const sumMA = maSlice.reduce((s, d) => s + d.sum, 0) / maSlice.length
+
+  function windowSkew(periods) {
+    const slice = draws.slice(Math.max(0, n - periods))
+    if (!slice.length) return { skew: 0, direction: 0, periods }
+    let below = 0
+    for (const d of slice) {
+      if (d.sum < sumMA) below++
+    }
+    const belowRatio = below / slice.length
+    const skew = Math.abs(belowRatio - 0.5)
+    let direction = 0
+    if (belowRatio >= 0.6) direction = 1
+    else if (belowRatio <= 0.4) direction = -1
+    return { skew, direction, periods, belowRatio }
+  }
+
+  const s8 = windowSkew(8)
+  const s16 = windowSkew(16)
+  const chosen = s8.skew >= s16.skew ? s8 : s16
+  const offset = chosen.skew > 0.1 ? 2 : 1
+  let targetSum = sumMA
+  if (chosen.direction === 1) targetSum = sumMA + offset
+  else if (chosen.direction === -1) targetSum = sumMA - offset
+  targetSum = Math.max(0, Math.min(27, Math.round(targetSum)))
+
+  return {
+    targetSum,
+    sumMA,
+    window: chosen.periods,
+    direction: chosen.direction,
+    belowRatio: chosen.belowRatio,
+  }
+}
+
+/** 出现频次在总期数 1/4～3/4 之间的数字（排除极冷极热） */
+function digitsInFreqBand(draws, pos, isUp, band = { min: FREQ_BAND_MIN, max: FREQ_BAND_MAX }) {
+  const range = isUp ? [0, 1, 2, 3, 4] : [5, 6, 7, 8, 9]
+  const n = draws.length
+  const all = range.map((d) => {
+    let freq = 0
+    let gap = 0
+    for (const draw of draws) if (draw.digits[pos] === d) freq++
+    for (let i = n - 1; i >= 0; i--) {
+      if (draws[i].digits[pos] === d) break
+      gap++
+    }
+    const ratio = freq / n
+    const inBand = ratio >= band.min && ratio <= band.max
+    const midDist = Math.abs(ratio - 0.5)
+    return { d, freq, ratio, gap, inBand, midDist }
+  })
+
+  const inBand = all.filter((x) => x.inBand)
+  if (inBand.length) {
+    return inBand.sort((a, b) => a.midDist - b.midDist || b.gap - a.gap)
+  }
+  return all.sort((a, b) => a.midDist - b.midDist || b.gap - a.gap).slice(0, 5)
+}
+
+/** 按奇偶比约束缩小每位候选（3:0 只用奇数，0:3 只用偶数） */
+function parityFilter(candidates, parity) {
+  if (parity === 'odd') return candidates.filter((x) => x.d % 2 === 1)
+  if (parity === 'even') return candidates.filter((x) => x.d % 2 === 0)
+  return candidates
+}
+
+function allDigitsInRange(draws, pos, isUp) {
+  const range = isUp ? [0, 1, 2, 3, 4] : [5, 6, 7, 8, 9]
+  const n = draws.length
+  return range.map((d) => {
+    let freq = 0
+    let gap = 0
+    for (const draw of draws) if (draw.digits[pos] === d) freq++
+    for (let i = n - 1; i >= 0; i--) {
+      if (draws[i].digits[pos] === d) break
+      gap++
+    }
+    const ratio = freq / n
+    return { d, freq, ratio, gap, inBand: true, midDist: Math.abs(ratio - 0.5) }
+  })
+}
+
+function posCandidatesForOe(draws, flags, oeIdx, band) {
+  const parityByPos =
+    oeIdx === 0
+      ? ['odd', 'odd', 'odd']
+      : oeIdx === 3
+        ? ['even', 'even', 'even']
+        : [null, null, null]
+
+  return [0, 1, 2].map((pos) => {
+    const isUp = flags[pos] === 0
+    const base = digitsInFreqBand(draws, pos, isUp, band)
+    const parity = parityByPos[pos]
+    if (!parity) return base
+    const filtered = parityFilter(base, parity)
+    if (filtered.length) return filtered
+    return parityFilter(allDigitsInRange(draws, pos, isUp), parity)
+  })
+}
+
+function matchesOeCategory(digits, oeIdx) {
+  return oeCatOfDigits(digits) === oeIdx
+}
+
+/** flags[pos]：0=上 1=下，顺序为 [百位, 十位, 个位] */
+function patternFlagsFromIdx(idx) {
+  return [(idx >> 2) & 1, (idx >> 1) & 1, idx & 1]
+}
+
+function scoreCombo(a, b, c, patternPick, oePick, sumTarget, comboFreq, countBand) {
+  const digits = [a.d, b.d, c.d]
+  const sum = a.d + b.d + c.d
+  const sumFit = Math.max(0, 1 - Math.abs(sum - sumTarget.targetSum) / 13.5)
+  const digitFit =
+    (1 - a.midDist / 0.25 + 1 - b.midDist / 0.25 + 1 - c.midDist / 0.25) / 3
+  const countFit = comboCountBandFit(comboFreq, digits, countBand)
+  const gapFit = (a.gap + b.gap + c.gap) / 3
+  const score =
+    W_PATTERN * patternPick.p / 100 +
+    W_OE * oePick.p / 100 +
+    W_SUM * (0.65 * sumFit + 0.35 * Math.min(1, digitFit)) +
+    countFit * 0.12 +
+    gapFit * 0.001
+  return { sum, score, sumFit, countFit }
+}
+
+function scoreHistorical(digits, patternPick, oePick, sumTarget, comboFreq, countBand) {
+  const sum = digits[0] + digits[1] + digits[2]
+  const sumFit = Math.max(0, 1 - Math.abs(sum - sumTarget.targetSum) / 13.5)
+  const countFit = comboCountBandFit(comboFreq, digits, countBand)
+  const score =
+    W_PATTERN * patternPick.p / 100 +
+    W_OE * oePick.p / 100 +
+    W_SUM * sumFit +
+    countFit * 0.12
+  return { sum, score, countFit }
+}
+
+/**
+ * 在「组合出现次数处于 3D 图中间 1/3～2/3」的历史开奖里选号
+ * （与 Combination3DChart 次数滑块同一套区间）
+ */
+function searchFromHistoricalDraws(
+  draws,
+  patternPick,
+  oePick,
+  sumTarget,
+  comboFreq,
+  countBand,
+  requireCountBand,
+) {
+  const flags = patternFlagsFromIdx(patternPick.i)
+  const seen = new Set()
+  let best = null
+  let bestScore = -1
+
+  for (let i = draws.length - 1; i >= 0; i--) {
+    const draw = draws[i]
+    const digits = draw.digits
+    const key = digits.join()
+    if (seen.has(key)) continue
+    seen.add(key)
+
+    if (patternIdxOf(draw) !== patternPick.i) continue
+    if (oeCatOf(draw) !== oePick.i) continue
+    if (requireCountBand && !isComboCountInBand(comboFreq, digits, countBand)) continue
+
+    const { sum, score } = scoreHistorical(
+      digits, patternPick, oePick, sumTarget, comboFreq, countBand,
+    )
+    if (score > bestScore) {
+      bestScore = score
+      best = {
+        digits: [...digits],
+        sum,
+        score,
+        flags,
+        comboCount: comboAppearCount(comboFreq, digits),
+        fromHistory: true,
+      }
+    }
+  }
+  return best
+}
+
+function searchBestCombo(
+  draws,
+  patternPick,
+  oePick,
+  sumTarget,
+  digitBand,
+  comboFreq,
+  countBand,
+  requireCountBand,
+) {
+  const flags = patternFlagsFromIdx(patternPick.i)
+  const posCandidates = posCandidatesForOe(draws, flags, oePick.i, digitBand)
+
+  let best = null
+  let bestScore = -1
+  for (const a of posCandidates[0]) {
+    for (const b of posCandidates[1]) {
+      for (const c of posCandidates[2]) {
+        const digits = [a.d, b.d, c.d]
+        if (patternIdxOf({ digits }) !== patternPick.i) continue
+        if (!matchesOeCategory(digits, oePick.i)) continue
+        if (comboAppearCount(comboFreq, digits) === 0) continue
+        if (requireCountBand && !isComboCountInBand(comboFreq, digits, countBand)) continue
+        const { sum, score } = scoreCombo(
+          a, b, c, patternPick, oePick, sumTarget, comboFreq, countBand,
+        )
+        if (sum > 27) continue
+        if (score > bestScore) {
+          bestScore = score
+          best = {
+            digits,
+            sum,
+            score,
+            flags,
+            comboCount: comboAppearCount(comboFreq, digits),
+          }
+        }
+      }
+    }
+  }
+  return best
+}
+
+function buildPrimaryRecommendation(draws, patternPick, oePick, sumTarget) {
+  const comboFreq = buildCombinationFrequency(draws)
+  const countBand = comboCountBandFromFreq(comboFreq)
+
+  const hist = searchFromHistoricalDraws(
+    draws, patternPick, oePick, sumTarget, comboFreq, countBand, true,
+  )
+  if (hist) return { ...hist, countBand }
+
+  const histRelaxed = searchFromHistoricalDraws(
+    draws, patternPick, oePick, sumTarget, comboFreq, countBand, false,
+  )
+  if (histRelaxed) return { ...histRelaxed, countBand }
+
+  const digitBands = [
+    { min: FREQ_BAND_MIN, max: FREQ_BAND_MAX },
+    { min: 0.15, max: 0.85 },
+    { min: 0, max: 1 },
+  ]
+  for (const requireCountBand of [true, false]) {
+    for (const digitBand of digitBands) {
+      const best = searchBestCombo(
+        draws, patternPick, oePick, sumTarget, digitBand,
+        comboFreq, countBand, requireCountBand,
+      )
+      if (best) return { ...best, countBand }
+    }
+  }
+  return null
+}
+
 // ── Digit scoring ─────────────────────────────────────────────────────────────
 
 function scoredDigitsFor(draws, pos, isUp, RECENT) {
@@ -264,7 +593,8 @@ function scoredDigitsFor(draws, pos, isUp, RECENT) {
 
 /**
  * Run the full prediction on `draws`.
- * Returns null if draws are too few to be meaningful.
+ * 首选：形态(45%)·奇偶比(30%)·和值(25%) + 组合次数在3D图中间1/3～2/3的历史号优先
+ * 形态从左到右：百位→十位→个位
  */
 export function buildPrediction(draws) {
   if (draws.length < 20) return null
@@ -272,128 +602,75 @@ export function buildPrediction(draws) {
   const lastDraw = draws[n - 1]
   const refDate = new Date(lastDraw.kjdate?.replace(/-/g, '/') ?? new Date())
 
-  // ── Pattern: 5-way ensemble ────────────────────────────────────────────────
-  // Method 1: frequency + gap (normalized to [0,1])
-  const freqGapProb = computeProb(
-    draws, 8, patternIdxOf,
-    (d, i) => gapOf(d, patternIdxOf, i),
-    refDate,
-  ).map((p) => p / 100)
-
-  // Method 2: per-position independent binary prediction
-  const posProb = perPositionPatternProb(draws, refDate)
-
-  // Method 3: first-order Markov
-  const mkv1 = markovPatternProb(draws)
-
-  // Method 4: second-order Markov with backoff
-  const mkv2 = markov2PatternProb(draws)
-
-  // Method 5: sum-conditional Bayesian prior
-  const sumCond = sumConditionalPatternProb(draws)
-
-  // Anti-streak penalty for the last few patterns seen
-  const penalty = recentStreakPenalty(draws)
-
-  // Weighted blend
-  const W = { freq: 0.22, pos: 0.24, m1: 0.16, m2: 0.16, sum: 0.22 }
-  const blended = freqGapProb.map((_, i) =>
-    (W.freq * freqGapProb[i] + W.pos * posProb[i] + W.m1 * mkv1[i] +
-     W.m2 * mkv2[i] + W.sum * sumCond[i]) * penalty[i]
+  const patternPick = pickBestWindowCategory(
+    draws, 8, patternIdxOf, (d, i) => gapOf(d, patternIdxOf, i), refDate, PATTERN_LABELS,
   )
-  const blendSum = blended.reduce((a, b) => a + b, 0)
-  const patternProb = blended.map((b) => b / blendSum)
-
-  const patternRanked = patternProb
-    .map((p, i) => ({ i, p, label: PATTERN_LABELS[i] }))
-    .sort((a, b) => b.p - a.p)
-  const topPattern = patternRanked[0]
-  const flags = [
-    (topPattern.i >> 2) & 1,
-    (topPattern.i >> 1) & 1,
-    topPattern.i & 1,
-  ]
-
-  // ── OE prob ───────────────────────────────────────────────────────────────
-  const oeProb = computeProb(
-    draws, 4, oeCatOf,
-    (d, i) => gapOf(d, oeCatOf, i),
-    refDate,
+  const oePick = pickBestWindowCategory(
+    draws, 4, oeCatOf, (d, i) => gapOf(d, oeCatOf, i), refDate, OE_LABELS,
   )
-  const oeRanked = oeProb
-    .map((p, i) => ({ i, p, label: OE_LABELS[i] }))
-    .sort((a, b) => b.p - a.p)
+  const sumTarget = sumMeanReversionTarget(draws)
+  const flags = patternFlagsFromIdx(patternPick.i)
 
-  // ── Recent sum avg ────────────────────────────────────────────────────────
-  const RECENT = Math.min(30, n)
-  const sumWindow = draws.slice(n - RECENT)
-  const recentSumAvg = sumWindow.reduce((s, d) => s + d.sum, 0) / sumWindow.length
+  const sumGapArr = Array.from({ length: 28 }, (_, s) => gapOf(draws, (draw) => draw.sum, s))
 
-  // ── Sum gaps ──────────────────────────────────────────────────────────────
-  const sumGap = Array.from({ length: 28 }, (_, s) => gapOf(draws, (draw) => draw.sum, s))
-  const maxSumGap = Math.max(...sumGap, 1)
+  const comboFreq = buildCombinationFrequency(draws)
+  const countBand = comboCountBandFromFreq(comboFreq)
 
-  // ── Digit candidates per position ─────────────────────────────────────────
-  const posCandidates = [0, 1, 2].map((pos) => {
-    const list = scoredDigitsFor(draws, pos, flags[pos] === 0, RECENT)
-    const maxG = Math.max(...list.map((s) => s.gap), 1)
-    const maxR = Math.max(...list.map((s) => s.recentFreq), 1)
-    return list
-      .map((s) => ({
-        ...s,
-        score: (0.55 * (s.gap / maxG) + 0.45 * (1 - s.recentFreq / maxR)) * Math.pow(0.5, s.streak),
-      }))
-      .sort((a, b) => b.score - a.score)
+  let primary = buildPrimaryRecommendation(draws, patternPick, oePick, sumTarget)
+  if (!primary) {
+    primary = searchBestCombo(
+      draws, patternPick, oePick, sumTarget, { min: 0, max: 1 },
+      comboFreq, countBand, false,
+    )
+  }
+  if (!primary) return null
+
+  const recommendations = []
+
+  function pushRec(rank, combo, oeLabel, oeProb, extra = {}) {
+    if (OE_LABELS[oeCatOfDigits(combo.digits)] !== oeLabel) return
+    recommendations.push({
+      rank,
+      digits: combo.digits,
+      sum: combo.sum,
+      pattern: patternPick.label,
+      patternIdx: patternPick.i,
+      probability: patternPick.p,
+      oddEvenRatio: oeLabel,
+      oddEvenProb: oeProb,
+      sumTarget: Number(sumTarget.sumMA.toFixed(1)),
+      sumDev: Number((combo.sum - sumTarget.sumMA).toFixed(1)),
+      sumGap: sumGapArr[combo.sum],
+      score: Number((combo.score * 100).toFixed(1)),
+      flags: combo.flags,
+      ...extra,
+    })
+  }
+
+  const band = primary.countBand ?? countBand
+  pushRec(1, primary, oePick.label, oePick.p, {
+    patternWindow: patternPick.window,
+    oeWindow: oePick.window,
+    sumWindow: sumTarget.window,
+    comboCount: primary.comboCount ?? comboAppearCount(comboFreq, primary.digits),
+    comboCountRange: `${band.filterMin}–${band.filterMax}`,
+    fromHistory: !!primary.fromHistory,
   })
-  const maxPosScore = Math.max(...posCandidates.flat().map((c) => c.score), 0.001)
-
-  // ── Enumerate combos ──────────────────────────────────────────────────────
-  const combos = []
-  for (const a of posCandidates[0]) {
-    for (const b of posCandidates[1]) {
-      for (const c of posCandidates[2]) {
-        const digits = [a.d, b.d, c.d]
-        const sum = a.d + b.d + c.d
-        if (sum > 27) continue
-        const coolFit = (a.score + b.score + c.score) / (3 * maxPosScore)
-        const sumFit = Math.max(0, 1 - Math.abs(sum - recentSumAvg) / 13.5)
-        const sgFit = sumGap[sum] / maxSumGap
-        combos.push({
-          digits, sum,
-          sumGap: sumGap[sum],
-          oeCat: oeCatOfDigits(digits),
-          score: 0.55 * coolFit + 0.30 * sumFit + 0.15 * sgFit,
-        })
-      }
-    }
-  }
-  combos.sort((a, b) => b.score - a.score)
-
-  // Bucket by OE and pick top per OE category in rank order
-  const combosByOe = [[], [], [], []]
-  for (const c of combos) combosByOe[c.oeCat].push(c)
-
-  const topCombos = []
-  for (const oe of oeRanked) {
-    if (topCombos.length >= 2) break
-    const list = combosByOe[oe.i]
-    if (list && list.length) {
-      topCombos.push({ ...list[0], oeLabel: oe.label, oeProb: oe.p })
-    }
-  }
-  while (topCombos.length < 2 && combos.length) {
-    const next = combos.find((c) => !topCombos.some((t) => t.digits.join() === c.digits.join()))
-    if (!next) break
-    topCombos.push({ ...next, oeLabel: OE_LABELS[next.oeCat], oeProb: oeProb[next.oeCat] })
-  }
 
   return {
-    topPattern: topPattern.label,
-    topPatternProb: topPattern.p,
-    topOE: oeRanked[0].label,
-    topOEProb: oeRanked[0].p,
-    recommendations: topCombos,
+    topPattern: patternPick.label,
+    topPatternProb: Number(patternPick.p.toFixed(1)),
+    topOddEven: oePick.label,
+    topOddEvenProb: Number(oePick.p.toFixed(1)),
+    topOE: oePick.label,
+    topOEProb: Number(oePick.p.toFixed(1)),
+    patternWindow: patternPick.window,
+    oeWindow: oePick.window,
+    sumTarget: sumTarget.targetSum,
+    recentSumAvg: Number(sumTarget.sumMA.toFixed(1)),
+    comboCountRange: `${countBand.filterMin}–${countBand.filterMax}`,
+    basePeriods: n,
+    recommendations,
     flags,
-    recentSumAvg,
   }
 }

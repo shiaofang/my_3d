@@ -6,16 +6,14 @@ const props = defineProps({
   compact: { type: Boolean, default: false },
 })
 
-const RANK_STYLES = [
-  { accent: '#fbbf24', glow: 'rgba(251,191,36,0.45)', icon: '🥇', tag: '首选' },
-  { accent: '#a5b4fc', glow: 'rgba(165,180,252,0.4)', icon: '🥈', tag: '次选' },
-]
-
-const topTwo = computed(() => (props.prediction?.recommendations ?? []).slice(0, 2))
-
-function styleFor(idx) {
-  return RANK_STYLES[idx] ?? RANK_STYLES[RANK_STYLES.length - 1]
+const PRIMARY_STYLE = {
+  accent: '#fbbf24',
+  glow: 'rgba(251,191,36,0.45)',
+  icon: '🥇',
+  tag: '首选',
 }
+
+const primary = computed(() => props.prediction?.recommendations?.[0] ?? null)
 
 function digitColor(d) {
   return d <= 4 ? '#fbbf24' : '#60a5fa'
@@ -23,30 +21,25 @@ function digitColor(d) {
 </script>
 
 <template>
-  <div v-if="prediction && prediction.recommendations.length && compact" class="pred-inline">
+  <div v-if="primary && compact" class="pred-inline">
     <span class="label">下期推荐号码</span>
-    <div class="inline-combos">
-      <div
-        v-for="(rec, idx) in topTwo"
-        :key="idx"
-        class="inline-combo"
-        :title="`${styleFor(idx).tag} · 和值 ${rec.sum} · 形态 ${rec.pattern} · 奇偶比 ${rec.oddEvenRatio}`"
-      >
-        <span class="inline-tag" :style="{ color: styleFor(idx).accent }">{{ styleFor(idx).tag }}</span>
-        <span class="inline-nums">
-          <span v-for="(n, i) in rec.digits" :key="i" class="inline-ball">{{ n }}</span>
-        </span>
-        <span class="inline-sum">{{ rec.sum }}</span>
-      </div>
+    <div
+      class="inline-combo"
+      :title="`${PRIMARY_STYLE.tag} · 形态 ${primary.pattern} · 奇偶比 ${primary.oddEvenRatio}`"
+    >
+      <span class="inline-tag" :style="{ color: PRIMARY_STYLE.accent }">{{ PRIMARY_STYLE.tag }}</span>
+      <span class="inline-nums">
+        <span v-for="(n, i) in primary.digits" :key="i" class="inline-ball">{{ n }}</span>
+      </span>
     </div>
   </div>
 
-  <div v-else-if="prediction && prediction.recommendations.length" class="pred-wrap">
+  <div v-else-if="primary" class="pred-wrap">
     <div class="pred-header">
       <div class="title-row">
         <span class="pred-title">⭐ 下期推荐号码</span>
         <span class="pred-basis">
-          基于「上下形态分布」反向冷却 + 和值参考 · 近 {{ prediction.basePeriods }} 期
+          形态·奇偶比·和值 + 组合次数中间段(同3D图) · 近 {{ prediction.basePeriods }} 期
         </span>
       </div>
       <div class="pattern-banner">
@@ -65,31 +58,20 @@ function digitColor(d) {
 
     <div class="combos">
       <div
-        v-for="(rec, idx) in topTwo"
-        :key="idx"
         class="combo-card"
-        :style="{ '--accent': styleFor(idx).accent, '--glow': styleFor(idx).glow }"
+        :style="{ '--accent': PRIMARY_STYLE.accent, '--glow': PRIMARY_STYLE.glow }"
       >
         <div class="combo-head">
-          <span class="rank-icon">{{ styleFor(idx).icon }}</span>
+          <span class="rank-icon">{{ PRIMARY_STYLE.icon }}</span>
           <div class="rank-info">
-            <span class="rank-tag">{{ styleFor(idx).tag }}</span>
-            <span class="rank-pattern">综合评分 {{ rec.score }}</span>
-          </div>
-          <div class="combo-sum">
-            <span class="sum-num">{{ rec.sum }}</span>
-            <span class="sum-label">
-              和值
-              <span :class="['sum-dev', rec.sumDev >= 0 ? 'pos' : 'neg']">
-                {{ rec.sumDev >= 0 ? '+' : '' }}{{ rec.sumDev }}
-              </span>
-            </span>
+            <span class="rank-tag">{{ PRIMARY_STYLE.tag }}</span>
+            <span class="rank-pattern">综合评分 {{ primary.score }}</span>
           </div>
         </div>
 
         <div class="balls-row">
           <div
-            v-for="(digit, i) in rec.digits"
+            v-for="(digit, i) in primary.digits"
             :key="i"
             class="ball-slot"
           >
@@ -98,8 +80,8 @@ function digitColor(d) {
               class="big-ball"
               :style="{ '--ball-color': digitColor(digit) }"
             >{{ digit }}</span>
-            <span class="pos-flag" :class="rec.flags[i] === 0 ? 'up' : 'down'">
-              {{ rec.flags[i] === 0 ? '上' : '下' }}
+            <span class="pos-flag" :class="primary.flags[i] === 0 ? 'up' : 'down'">
+              {{ primary.flags[i] === 0 ? '上' : '下' }}
             </span>
           </div>
         </div>
@@ -107,16 +89,12 @@ function digitColor(d) {
         <div class="meta-row">
           <span class="meta-pill">
             <span class="dot dot-gold" />
-            形态 {{ rec.pattern }}
+            形态 {{ primary.pattern }}
           </span>
           <span class="meta-pill oe-pill">
             <span class="dot dot-cyan" />
-            奇偶比 <b>{{ rec.oddEvenRatio }}</b>
-            <span class="oe-prob">{{ rec.oddEvenProb }}%</span>
-          </span>
-          <span class="meta-pill">
-            <span class="dot dot-orange" />
-            和值遗漏 {{ rec.sumGap }}
+            奇偶比 <b>{{ primary.oddEvenRatio }}</b>
+            <span class="oe-prob">{{ primary.oddEvenProb }}%</span>
           </span>
         </div>
       </div>
@@ -127,7 +105,7 @@ function digitColor(d) {
       <span class="leg"><span class="ldot down" /> 下 (5–9)</span>
       <span class="leg-spacer" />
       <span class="leg-note">
-        评分 = 数字冷却 55% + 和值贴近 30% + 和值遗漏 15%
+        首选优先从历史开奖中选取，组合出现次数在 3D 图次数 1/3～2/3 区间内
       </span>
     </div>
 
@@ -145,13 +123,6 @@ function digitColor(d) {
 .pred-inline .label {
   font-size: 11px;
   color: #64748b;
-}
-
-.inline-combos {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
 .inline-combo {
@@ -185,17 +156,6 @@ function digitColor(d) {
   font-weight: 700;
   font-size: 12px;
   box-shadow: 0 1px 4px rgba(251, 191, 36, 0.35);
-}
-
-.inline-combo:nth-child(2) .inline-ball {
-  background: linear-gradient(145deg, #c7d2fe, #a5b4fc);
-  box-shadow: 0 2px 6px rgba(165, 180, 252, 0.35);
-}
-
-.inline-sum {
-  font-size: 11px;
-  font-weight: 600;
-  color: #94a3b8;
 }
 
 .pred-wrap {
@@ -250,8 +210,8 @@ function digitColor(d) {
 
 .combos {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 14px;
+  grid-template-columns: 1fr;
+  max-width: 420px;
 }
 
 .combo-card {
@@ -290,25 +250,6 @@ function digitColor(d) {
 .rank-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .rank-tag { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 0.4px; }
 .rank-pattern { font-size: 11px; color: #64748b; letter-spacing: 0.3px; }
-
-.combo-sum {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  line-height: 1;
-}
-
-.sum-num { font-size: 26px; font-weight: 900; color: var(--accent); }
-.sum-label { margin-top: 4px; font-size: 11px; color: #94a3b8; letter-spacing: 0.3px; }
-
-.sum-dev {
-  margin-left: 4px;
-  font-weight: 700;
-  padding: 1px 5px;
-  border-radius: 6px;
-}
-.sum-dev.pos { color: #fbbf24; background: rgba(251,191,36,0.12); }
-.sum-dev.neg { color: #60a5fa; background: rgba(96,165,250,0.12); }
 
 .balls-row {
   display: flex;
@@ -398,6 +339,5 @@ function digitColor(d) {
   .combos { grid-template-columns: 1fr; }
   .legend-row { flex-direction: column; align-items: flex-start; gap: 6px; }
   .pred-inline { width: auto; }
-  .inline-combos { gap: 12px; }
 }
 </style>

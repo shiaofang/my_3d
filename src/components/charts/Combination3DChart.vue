@@ -5,6 +5,7 @@ import { use } from 'echarts/core'
 import { TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import 'echarts-gl'
+import { comboCountBandFromFreq } from '../../utils/combinationFrequency.js'
 
 use([TooltipComponent, CanvasRenderer])
 
@@ -28,12 +29,11 @@ watch(
   () => props.combinationFrequency,
   (freq) => {
     if (!freq.length) return
-    const min = Math.min(...freq)
-    const max = Math.max(...freq, 1)
-    dataMin.value = min
-    dataMax.value = max
-    filterMin.value = min
-    filterMax.value = max
+    const band = comboCountBandFromFreq(freq)
+    dataMin.value = band.dataMin
+    dataMax.value = band.dataMax
+    filterMin.value = band.filterMin
+    filterMax.value = band.filterMax
     viewLocked.value = false
   },
   { immediate: true },
@@ -44,22 +44,25 @@ function lockView() {
 }
 
 function lerpColor(hex1, hex2, t) {
-  const r1 = parseInt(hex1.slice(1, 3), 16)
-  const g1 = parseInt(hex1.slice(3, 5), 16)
-  const b1 = parseInt(hex1.slice(5, 7), 16)
-  const r2 = parseInt(hex2.slice(1, 3), 16)
-  const g2 = parseInt(hex2.slice(3, 5), 16)
-  const b2 = parseInt(hex2.slice(5, 7), 16)
+  const a = hex1 || GRADIENT[0]
+  const b = hex2 || GRADIENT[GRADIENT.length - 1]
+  const r1 = parseInt(a.slice(1, 3), 16)
+  const g1 = parseInt(a.slice(3, 5), 16)
+  const b1 = parseInt(a.slice(5, 7), 16)
+  const r2 = parseInt(b.slice(1, 3), 16)
+  const g2 = parseInt(b.slice(3, 5), 16)
+  const b2 = parseInt(b.slice(5, 7), 16)
   const r = Math.round(r1 + (r2 - r1) * t)
   const g = Math.round(g1 + (g2 - g1) * t)
-  const b = Math.round(b1 + (b2 - b1) * t)
-  return `rgb(${r},${g},${b})`
+  const bl = Math.round(b1 + (b2 - b1) * t)
+  return `rgb(${r},${g},${bl})`
 }
 
 function freqColor(count, minVal, maxVal) {
-  const t = (count - minVal) / (maxVal - minVal || 1)
+  const span = maxVal - minVal
+  const t = span > 0 ? Math.min(1, Math.max(0, (count - minVal) / span)) : 0
   const idx = t * (GRADIENT.length - 1)
-  const lo = Math.floor(idx)
+  const lo = Math.min(Math.floor(idx), GRADIENT.length - 1)
   const hi = Math.min(lo + 1, GRADIENT.length - 1)
   return lerpColor(GRADIENT[lo], GRADIENT[hi], idx - lo)
 }
