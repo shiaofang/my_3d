@@ -7,6 +7,7 @@ import FrequencyChart from './components/charts/FrequencyChart.vue'
 import SumTrendChart from './components/charts/SumTrendChart.vue'
 import Chart3D from './components/charts/Chart3D.vue'
 import Combination3DChart from './components/charts/Combination3DChart.vue'
+import NumberTypeChart from './components/charts/NumberTypeChart.vue'
 import UpDownChart from './components/charts/UpDownChart.vue'
 import OddEvenChart from './components/charts/OddEvenChart.vue'
 import PredictionPanel from './components/PredictionPanel.vue'
@@ -78,14 +79,6 @@ onMounted(() => store.loadData())
               <span class="latest-nums">
                 <span v-for="(n, i) in latestDraw.digits" :key="i" class="ball">{{ n }}</span>
               </span>
-            </div>
-            <div class="latest-item">
-              <span class="label">和值</span>
-              <span class="value accent">{{ latestDraw.sum }}</span>
-            </div>
-            <div class="latest-item">
-              <span class="label">形态</span>
-              <span class="value">{{ latestDraw.type }}</span>
             </div>
             <PredictionPanel v-if="!loading && nextPrediction" :prediction="nextPrediction" compact />
           </div>
@@ -184,6 +177,19 @@ onMounted(() => store.loadData())
             <OddEvenChart :draws="chronDraws" />
           </article>
 
+          <article class="card">
+            <h2>和值走势</h2>
+            <p class="card-desc">三位号码之和的变化曲线</p>
+            <SumTrendChart :sum-series="sumSeries" />
+          </article>
+
+          <article class="card">
+            <h2>组三 / 组六概率</h2>
+            <p class="card-desc">自动对比近 24/32 天与近 24/32 期，识别组三间隔规律后给出下期概率；悬停查看详情</p>
+            <NumberTypeChart :draws="chronDraws" />
+          </article>
+
+
           <article class="card card-wide">
             <h2>位置转移概率</h2>
             <p class="card-desc">基于历史数据，统计「当某位（百/十/个）出现指定数字 x 时，下一期同一位上 0–9 各数字出现的概率」，并结合当前遗漏加权</p>
@@ -194,12 +200,6 @@ onMounted(() => store.loadData())
             <h2>号码走势图</h2>
             <p class="card-desc">百位、十位、个位号码随期号变化趋势</p>
             <TrendChart :draws="chronDraws" />
-          </article>
-
-          <article class="card">
-            <h2>和值走势</h2>
-            <p class="card-desc">三位号码之和的变化曲线</p>
-            <SumTrendChart :sum-series="sumSeries" />
           </article>
 
           <article class="card">

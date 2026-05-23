@@ -252,15 +252,53 @@ import {
   isComboCountInBand,
   comboCountBandFit,
 } from './combinationFrequency.js'
+import { getNumberType } from './parser.js'
+import { predictTypeProbabilities } from './numberTypePattern.js'
 
 const CHART_OMI_WEIGHT = 0.6
 /** 每位数字出现次数占历史总期数的 1/4～3/4（排除极冷极热） */
 const FREQ_BAND_MIN = 0.25
 const FREQ_BAND_MAX = 0.75
 
-const W_PATTERN = 0.45
-const W_OE = 0.30
-const W_SUM = 0.25
+const W_PATTERN = 0.40
+const W_OE = 0.27
+const W_SUM = 0.23
+const W_TYPE = 0.10
+
+/** 低于此期数时，允许推荐从未出现过的组合（样本太少时几乎无法命中「出现过」约束） */
+const MIN_DRAWS_FOR_APPEAR_FILTER = 120
+
+/** 按组三/组六预测概率得到 0–1 的形态契合度（排除豹子） */
+function typeFitScore(digits, typePred) {
+  const t = getNumberType(digits)
+  if (t === '豹子') return 0
+  const zu3 = typePred.pcts[0] / 100
+  const zu6 = typePred.pcts[1] / 100
+  return t === '组三' ? zu3 : zu6
+}
+
+/** 强信号时收窄候选形态；否则组三+组六均可 */
+function allowedNumberTypes(typePred) {
+  const [zu3, zu6] = typePred.pcts
+  if (typePred.signal === 'after-zu3' || typePred.signal === 'pattern-broken') {
+    return new Set(['组六'])
+  }
+  if (
+    (typePred.signal === 'cycle-peak' || typePred.signal === 'overdue-mild') &&
+    zu3 >= zu6
+  ) {
+    return new Set(['组三'])
+  }
+  if (zu3 >= zu6 + 12) return new Set(['组三'])
+  if (zu6 >= zu3 + 20) return new Set(['组六'])
+  return new Set(['组三', '组六'])
+}
+
+function passesTypeFilter(digits, allowed) {
+  const t = getNumberType(digits)
+  if (t === '豹子') return false
+  return allowed.has(t)
+}
 
 /** 单窗口内各类别预测概率（%），逻辑同 UpDownChart / OddEvenChart */
 function windowCategoryPredictedPct(draws, days, numCats, categoryFn, gapsFn, refDate) {
@@ -416,7 +454,7 @@ function patternFlagsFromIdx(idx) {
   return [(idx >> 2) & 1, (idx >> 1) & 1, idx & 1]
 }
 
-function scoreCombo(a, b, c, patternPick, oePick, sumTarget, comboFreq, countBand) {
+function scoreCombo(a, b, c, patternPick, oePick, sumTarget, comboFreq, countBand, typePred) {
   const digits = [a.d, b.d, c.d]
   const sum = a.d + b.d + c.d
   const sumFit = Math.max(0, 1 - Math.abs(sum - sumTarget.targetSum) / 13.5)
@@ -424,25 +462,29 @@ function scoreCombo(a, b, c, patternPick, oePick, sumTarget, comboFreq, countBan
     (1 - a.midDist / 0.25 + 1 - b.midDist / 0.25 + 1 - c.midDist / 0.25) / 3
   const countFit = comboCountBandFit(comboFreq, digits, countBand)
   const gapFit = (a.gap + b.gap + c.gap) / 3
+  const tFit = typeFitScore(digits, typePred)
   const score =
     W_PATTERN * patternPick.p / 100 +
     W_OE * oePick.p / 100 +
     W_SUM * (0.65 * sumFit + 0.35 * Math.min(1, digitFit)) +
+    W_TYPE * tFit +
     countFit * 0.12 +
     gapFit * 0.001
-  return { sum, score, sumFit, countFit }
+  return { sum, score, sumFit, countFit, numberType: getNumberType(digits) }
 }
 
-function scoreHistorical(digits, patternPick, oePick, sumTarget, comboFreq, countBand) {
+function scoreHistorical(digits, patternPick, oePick, sumTarget, comboFreq, countBand, typePred) {
   const sum = digits[0] + digits[1] + digits[2]
   const sumFit = Math.max(0, 1 - Math.abs(sum - sumTarget.targetSum) / 13.5)
   const countFit = comboCountBandFit(comboFreq, digits, countBand)
+  const tFit = typeFitScore(digits, typePred)
   const score =
     W_PATTERN * patternPick.p / 100 +
     W_OE * oePick.p / 100 +
     W_SUM * sumFit +
+    W_TYPE * tFit +
     countFit * 0.12
-  return { sum, score, countFit }
+  return { sum, score, countFit, numberType: getNumberType(digits) }
 }
 
 /**
@@ -457,6 +499,8 @@ function searchFromHistoricalDraws(
   comboFreq,
   countBand,
   requireCountBand,
+  typePred,
+  allowedTypes,
 ) {
   const flags = patternFlagsFromIdx(patternPick.i)
   const seen = new Set()
@@ -472,10 +516,11 @@ function searchFromHistoricalDraws(
 
     if (patternIdxOf(draw) !== patternPick.i) continue
     if (oeCatOf(draw) !== oePick.i) continue
+    if (!passesTypeFilter(digits, allowedTypes)) continue
     if (requireCountBand && !isComboCountInBand(comboFreq, digits, countBand)) continue
 
-    const { sum, score } = scoreHistorical(
-      digits, patternPick, oePick, sumTarget, comboFreq, countBand,
+    const { sum, score, numberType } = scoreHistorical(
+      digits, patternPick, oePick, sumTarget, comboFreq, countBand, typePred,
     )
     if (score > bestScore) {
       bestScore = score
@@ -484,12 +529,106 @@ function searchFromHistoricalDraws(
         sum,
         score,
         flags,
+        numberType,
         comboCount: comboAppearCount(comboFreq, digits),
         fromHistory: true,
       }
     }
   }
   return best
+}
+
+const MAX_PREDICTION_GROUPS = 9
+
+function upsertComboCandidate(map, entry) {
+  const key = entry.digits.join('')
+  const prev = map.get(key)
+  if (!prev || entry.score > prev.score) map.set(key, entry)
+}
+
+/** 收集评分最高的若干组号码（<10 组），用于「预测组」展示 */
+function searchTopCombos(
+  draws,
+  patternPick,
+  oePick,
+  sumTarget,
+  comboFreq,
+  countBand,
+  typePred,
+  allowedTypes,
+  maxCount = MAX_PREDICTION_GROUPS,
+) {
+  const flags = patternFlagsFromIdx(patternPick.i)
+  const digitBand = { min: FREQ_BAND_MIN, max: FREQ_BAND_MAX }
+  const posCandidates = posCandidatesForOe(draws, flags, oePick.i, digitBand)
+  const candidates = new Map()
+
+  for (const a of posCandidates[0]) {
+    for (const b of posCandidates[1]) {
+      for (const c of posCandidates[2]) {
+        const digits = [a.d, b.d, c.d]
+        if (patternIdxOf({ digits }) !== patternPick.i) continue
+        if (!matchesOeCategory(digits, oePick.i)) continue
+        if (!passesTypeFilter(digits, allowedTypes)) continue
+        if (
+          comboAppearCount(comboFreq, digits) === 0 &&
+          draws.length >= MIN_DRAWS_FOR_APPEAR_FILTER
+        ) continue
+        const { sum, score, numberType } = scoreCombo(
+          a, b, c, patternPick, oePick, sumTarget, comboFreq, countBand, typePred,
+        )
+        if (sum > 27) continue
+        upsertComboCandidate(candidates, {
+          digits,
+          sum,
+          score,
+          flags,
+          numberType,
+          comboCount: comboAppearCount(comboFreq, digits),
+        })
+      }
+    }
+  }
+
+  const histSeen = new Set()
+  for (let i = draws.length - 1; i >= 0; i--) {
+    const draw = draws[i]
+    const digits = draw.digits
+    const key = digits.join('')
+    if (histSeen.has(key)) continue
+    histSeen.add(key)
+    if (patternIdxOf(draw) !== patternPick.i) continue
+    if (oeCatOf(draw) !== oePick.i) continue
+    if (!passesTypeFilter(digits, allowedTypes)) continue
+    const { sum, score, numberType } = scoreHistorical(
+      digits, patternPick, oePick, sumTarget, comboFreq, countBand, typePred,
+    )
+    upsertComboCandidate(candidates, {
+      digits: [...digits],
+      sum,
+      score,
+      flags,
+      numberType,
+      comboCount: comboAppearCount(comboFreq, digits),
+      fromHistory: true,
+    })
+  }
+
+  const ranked = [...candidates.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxCount)
+  const scoreSum = ranked.reduce((s, x) => s + x.score, 0) || 1
+
+  return ranked.map((item, idx) => ({
+    rank: idx + 1,
+    digits: item.digits,
+    label: item.digits.join(''),
+    sum: item.sum,
+    score: Number((item.score * 100).toFixed(1)),
+    probability: Number(((item.score / scoreSum) * 100).toFixed(1)),
+    numberType: item.numberType,
+    fromHistory: !!item.fromHistory,
+  }))
 }
 
 function searchBestCombo(
@@ -501,6 +640,8 @@ function searchBestCombo(
   comboFreq,
   countBand,
   requireCountBand,
+  typePred,
+  allowedTypes,
 ) {
   const flags = patternFlagsFromIdx(patternPick.i)
   const posCandidates = posCandidatesForOe(draws, flags, oePick.i, digitBand)
@@ -513,10 +654,14 @@ function searchBestCombo(
         const digits = [a.d, b.d, c.d]
         if (patternIdxOf({ digits }) !== patternPick.i) continue
         if (!matchesOeCategory(digits, oePick.i)) continue
-        if (comboAppearCount(comboFreq, digits) === 0) continue
+        if (!passesTypeFilter(digits, allowedTypes)) continue
+        if (
+          comboAppearCount(comboFreq, digits) === 0 &&
+          draws.length >= MIN_DRAWS_FOR_APPEAR_FILTER
+        ) continue
         if (requireCountBand && !isComboCountInBand(comboFreq, digits, countBand)) continue
-        const { sum, score } = scoreCombo(
-          a, b, c, patternPick, oePick, sumTarget, comboFreq, countBand,
+        const { sum, score, numberType } = scoreCombo(
+          a, b, c, patternPick, oePick, sumTarget, comboFreq, countBand, typePred,
         )
         if (sum > 27) continue
         if (score > bestScore) {
@@ -526,6 +671,7 @@ function searchBestCombo(
             sum,
             score,
             flags,
+            numberType,
             comboCount: comboAppearCount(comboFreq, digits),
           }
         }
@@ -535,32 +681,38 @@ function searchBestCombo(
   return best
 }
 
-function buildPrimaryRecommendation(draws, patternPick, oePick, sumTarget) {
+function buildPrimaryRecommendation(draws, patternPick, oePick, sumTarget, typePred) {
   const comboFreq = buildCombinationFrequency(draws)
   const countBand = comboCountBandFromFreq(comboFreq)
+  const strictTypes = allowedNumberTypes(typePred)
+  const relaxedTypes = new Set(['组三', '组六'])
 
-  const hist = searchFromHistoricalDraws(
-    draws, patternPick, oePick, sumTarget, comboFreq, countBand, true,
-  )
-  if (hist) return { ...hist, countBand }
+  for (const allowedTypes of [strictTypes, relaxedTypes]) {
+    const hist = searchFromHistoricalDraws(
+      draws, patternPick, oePick, sumTarget, comboFreq, countBand, true,
+      typePred, allowedTypes,
+    )
+    if (hist) return { ...hist, countBand }
 
-  const histRelaxed = searchFromHistoricalDraws(
-    draws, patternPick, oePick, sumTarget, comboFreq, countBand, false,
-  )
-  if (histRelaxed) return { ...histRelaxed, countBand }
+    const histRelaxed = searchFromHistoricalDraws(
+      draws, patternPick, oePick, sumTarget, comboFreq, countBand, false,
+      typePred, allowedTypes,
+    )
+    if (histRelaxed) return { ...histRelaxed, countBand }
 
-  const digitBands = [
-    { min: FREQ_BAND_MIN, max: FREQ_BAND_MAX },
-    { min: 0.15, max: 0.85 },
-    { min: 0, max: 1 },
-  ]
-  for (const requireCountBand of [true, false]) {
-    for (const digitBand of digitBands) {
-      const best = searchBestCombo(
-        draws, patternPick, oePick, sumTarget, digitBand,
-        comboFreq, countBand, requireCountBand,
-      )
-      if (best) return { ...best, countBand }
+    const digitBands = [
+      { min: FREQ_BAND_MIN, max: FREQ_BAND_MAX },
+      { min: 0.15, max: 0.85 },
+      { min: 0, max: 1 },
+    ]
+    for (const requireCountBand of [true, false]) {
+      for (const digitBand of digitBands) {
+        const best = searchBestCombo(
+          draws, patternPick, oePick, sumTarget, digitBand,
+          comboFreq, countBand, requireCountBand, typePred, allowedTypes,
+        )
+        if (best) return { ...best, countBand }
+      }
     }
   }
   return null
@@ -593,7 +745,7 @@ function scoredDigitsFor(draws, pos, isUp, RECENT) {
 
 /**
  * Run the full prediction on `draws`.
- * 首选：形态(45%)·奇偶比(30%)·和值(25%) + 组合次数在3D图中间1/3～2/3的历史号优先
+ * 首选：形态·奇偶比·和值·组三/组六(近24天间断规律) + 组合次数中间段历史号优先
  * 形态从左到右：百位→十位→个位
  */
 export function buildPrediction(draws) {
@@ -610,17 +762,20 @@ export function buildPrediction(draws) {
   )
   const sumTarget = sumMeanReversionTarget(draws)
   const flags = patternFlagsFromIdx(patternPick.i)
+  const typePred = predictTypeProbabilities(draws, undefined, refDate)
+  const topType = typePred.pcts[0] >= typePred.pcts[1] ? '组三' : '组六'
+  const topTypeProb = Math.max(typePred.pcts[0], typePred.pcts[1])
 
   const sumGapArr = Array.from({ length: 28 }, (_, s) => gapOf(draws, (draw) => draw.sum, s))
 
   const comboFreq = buildCombinationFrequency(draws)
   const countBand = comboCountBandFromFreq(comboFreq)
 
-  let primary = buildPrimaryRecommendation(draws, patternPick, oePick, sumTarget)
+  let primary = buildPrimaryRecommendation(draws, patternPick, oePick, sumTarget, typePred)
   if (!primary) {
     primary = searchBestCombo(
       draws, patternPick, oePick, sumTarget, { min: 0, max: 1 },
-      comboFreq, countBand, false,
+      comboFreq, countBand, false, typePred, new Set(['组三', '组六']),
     )
   }
   if (!primary) return null
@@ -648,6 +803,9 @@ export function buildPrediction(draws) {
   }
 
   const band = primary.countBand ?? countBand
+  const numberType = primary.numberType ?? getNumberType(primary.digits)
+  const typeProb = numberType === '组三' ? typePred.pcts[0] : typePred.pcts[1]
+
   pushRec(1, primary, oePick.label, oePick.p, {
     patternWindow: patternPick.window,
     oeWindow: oePick.window,
@@ -655,7 +813,41 @@ export function buildPrediction(draws) {
     comboCount: primary.comboCount ?? comboAppearCount(comboFreq, primary.digits),
     comboCountRange: `${band.filterMin}–${band.filterMax}`,
     fromHistory: !!primary.fromHistory,
+    numberType,
+    numberTypeProb: Number(typeProb.toFixed(1)),
   })
+
+  const groupTypes = allowedNumberTypes(typePred)
+  const relaxedGroupTypes = groupTypes.size ? groupTypes : new Set(['组三', '组六'])
+  let predictionGroups = searchTopCombos(
+    draws, patternPick, oePick, sumTarget, comboFreq, countBand, typePred, relaxedGroupTypes,
+  )
+  const primaryKey = primary.digits.join('')
+  if (!predictionGroups.some((g) => g.label === primaryKey)) {
+    const primaryScore = primary.score ?? scoreHistorical(
+      primary.digits, patternPick, oePick, sumTarget, comboFreq, countBand, typePred,
+    ).score
+    predictionGroups = [
+      {
+        rank: 1,
+        digits: primary.digits,
+        label: primaryKey,
+        sum: primary.sum,
+        score: Number((primaryScore * 100).toFixed(1)),
+        probability: 0,
+        numberType,
+        fromHistory: !!primary.fromHistory,
+        isPrimary: true,
+      },
+      ...predictionGroups,
+    ].slice(0, MAX_PREDICTION_GROUPS)
+    const total = predictionGroups.reduce((s, g) => s + g.score, 0) || 1
+    predictionGroups = predictionGroups.map((g, i) => ({
+      ...g,
+      rank: i + 1,
+      probability: Number(((g.score / total) * 100).toFixed(1)),
+    }))
+  }
 
   return {
     topPattern: patternPick.label,
@@ -664,6 +856,11 @@ export function buildPrediction(draws) {
     topOddEvenProb: Number(oePick.p.toFixed(1)),
     topOE: oePick.label,
     topOEProb: Number(oePick.p.toFixed(1)),
+    topType,
+    topTypeProb: Number(topTypeProb.toFixed(1)),
+    typeZu3Prob: Number(typePred.pcts[0].toFixed(1)),
+    typeZu6Prob: Number(typePred.pcts[1].toFixed(1)),
+    typeSignal: typePred.signalLabel,
     patternWindow: patternPick.window,
     oeWindow: oePick.window,
     sumTarget: sumTarget.targetSum,
@@ -671,6 +868,7 @@ export function buildPrediction(draws) {
     comboCountRange: `${countBand.filterMin}–${countBand.filterMax}`,
     basePeriods: n,
     recommendations,
+    predictionGroups,
     flags,
   }
 }

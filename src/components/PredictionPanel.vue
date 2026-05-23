@@ -1,5 +1,13 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import VChart from 'vue-echarts'
+import { use } from 'echarts/core'
+import { BarChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+import { getNumberType } from '../utils/parser.js'
+
+use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 const props = defineProps({
   prediction: { type: Object, default: null },
@@ -13,24 +21,112 @@ const PRIMARY_STYLE = {
   tag: '首选',
 }
 
+const showGroupModal = ref(false)
+
 const primary = computed(() => props.prediction?.recommendations?.[0] ?? null)
+
+const predictionGroups = computed(() => props.prediction?.predictionGroups ?? [])
+
+const groupChartOption = computed(() => {
+  const groups = predictionGroups.value
+  if (!groups.length) return null
+  const labels = groups.map((g) => g.label)
+  const probs = groups.map((g) => g.probability)
+  return {
+    backgroundColor: 'transparent',
+    grid: { left: 48, right: 16, top: 24, bottom: 40 },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(15,23,42,0.95)',
+      borderColor: '#334155',
+      textStyle: { color: '#e2e8f0', fontSize: 12 },
+      formatter(params) {
+        const p = params[0]
+        const g = groups[p.dataIndex]
+        return `${g.label}<br/>相对概率 <b style="color:#fbbf24">${g.probability}%</b><br/>综合评分 ${g.score}`
+      },
+    },
+    xAxis: {
+      type: 'category',
+      data: labels,
+      axisLabel: { color: '#94a3b8', fontSize: 12, fontWeight: 700 },
+      axisLine: { lineStyle: { color: '#334155' } },
+    },
+    yAxis: {
+      type: 'value',
+      name: '概率%',
+      nameTextStyle: { color: '#64748b', fontSize: 11 },
+      axisLabel: { color: '#64748b', formatter: '{value}%' },
+      splitLine: { lineStyle: { color: 'rgba(51,65,85,0.5)' } },
+    },
+    series: [{
+      type: 'bar',
+      data: probs,
+      barMaxWidth: 36,
+      itemStyle: {
+        color: {
+          type: 'linear',
+          x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [
+            { offset: 0, color: '#fbbf24' },
+            { offset: 1, color: '#d97706' },
+          ],
+        },
+        borderRadius: [4, 4, 0, 0],
+      },
+      label: {
+        show: true,
+        position: 'top',
+        color: '#fbbf24',
+        fontSize: 11,
+        formatter: '{c}%',
+      },
+    }],
+  }
+})
+
+/** 推荐号码实际形态（组三/组六），由三位号码计算 */
+const recNumberType = computed(() => {
+  const p = primary.value
+  if (!p?.digits?.length) return null
+  const t = getNumberType(p.digits)
+  return t === '豹子' ? null : t
+})
 
 function digitColor(d) {
   return d <= 4 ? '#fbbf24' : '#60a5fa'
+}
+
+function openGroupModal() {
+  if (predictionGroups.value.length) showGroupModal.value = true
 }
 </script>
 
 <template>
   <div v-if="primary && compact" class="pred-inline">
-    <span class="label">下期推荐号码</span>
+    <div class="inline-head">
+      <span class="label">下期推荐号码</span>
+      <span
+        v-if="recNumberType"
+        class="inline-type"
+        :class="recNumberType === '组三' ? 'type-zu3' : 'type-zu6'"
+      >{{ recNumberType }}</span>
+    </div>
     <div
       class="inline-combo"
-      :title="`${PRIMARY_STYLE.tag} · 形态 ${primary.pattern} · 奇偶比 ${primary.oddEvenRatio}`"
+      :title="`${PRIMARY_STYLE.tag} · ${recNumberType} · 上下${primary.pattern} · 奇偶${primary.oddEvenRatio}`"
     >
       <span class="inline-tag" :style="{ color: PRIMARY_STYLE.accent }">{{ PRIMARY_STYLE.tag }}</span>
       <span class="inline-nums">
         <span v-for="(n, i) in primary.digits" :key="i" class="inline-ball">{{ n }}</span>
       </span>
+      <button
+        v-if="predictionGroups.length"
+        type="button"
+        class="btn-pred-group"
+        title="查看概率最高的预测号码组"
+        @click="openGroupModal"
+      >预测组</button>
     </div>
   </div>
 
@@ -39,7 +135,7 @@ function digitColor(d) {
       <div class="title-row">
         <span class="pred-title">⭐ 下期推荐号码</span>
         <span class="pred-basis">
-          形态·奇偶比·和值 + 组合次数中间段(同3D图) · 近 {{ prediction.basePeriods }} 期
+          形态·奇偶比·和值·组三/组六 + 组合次数中间段 · 近 {{ prediction.basePeriods }} 期
         </span>
       </div>
       <div class="pattern-banner">
@@ -53,7 +149,12 @@ function digitColor(d) {
         <span class="banner-divider" />
         <span class="banner-label">近期和值</span>
         <span class="banner-sum">{{ prediction.recentSumAvg }}</span>
+        <span class="banner-divider" />
+        <span class="banner-label">下期倾向</span>
+        <span class="banner-pattern type">{{ prediction.topType }}</span>
+        <span class="banner-prob type">{{ prediction.topTypeProb }}%</span>
       </div>
+      <p v-if="prediction.typeSignal" class="type-signal">{{ prediction.typeSignal }}</p>
     </div>
 
     <div class="combos">
@@ -96,6 +197,14 @@ function digitColor(d) {
             奇偶比 <b>{{ primary.oddEvenRatio }}</b>
             <span class="oe-prob">{{ primary.oddEvenProb }}%</span>
           </span>
+          <span
+            v-if="primary.numberType"
+            class="meta-pill type-pill"
+            :class="primary.numberType === '组三' ? 'type-zu3' : 'type-zu6'"
+          >
+            {{ primary.numberType }}
+            <span class="type-prob">{{ primary.numberTypeProb }}%</span>
+          </span>
         </div>
       </div>
     </div>
@@ -111,6 +220,44 @@ function digitColor(d) {
 
     <p class="disclaimer">⚠️ 预测仅供参考，彩票结果随机，请理性购彩。</p>
   </div>
+
+  <Teleport to="body">
+    <div
+      v-if="showGroupModal && predictionGroups.length"
+      class="group-overlay"
+      @click.self="showGroupModal = false"
+    >
+      <div class="group-dialog" role="dialog" aria-labelledby="group-dialog-title">
+        <div class="group-dialog-head">
+          <div>
+            <h3 id="group-dialog-title" class="group-dialog-title">预测组</h3>
+            <p class="group-dialog-sub">
+              形态 {{ prediction.topPattern }} · 奇偶 {{ prediction.topOddEven }}
+              · 共 {{ predictionGroups.length }} 组（相对概率）
+            </p>
+          </div>
+          <button type="button" class="group-close" @click="showGroupModal = false">×</button>
+        </div>
+
+        <ul class="group-list">
+          <li v-for="g in predictionGroups" :key="g.label" class="group-item">
+            <span class="group-rank">{{ g.rank }}</span>
+            <span class="group-nums">
+              <span v-for="(n, i) in g.digits" :key="i" class="group-ball">{{ n }}</span>
+            </span>
+            <span class="group-type" :class="g.numberType === '组三' ? 'type-zu3' : 'type-zu6'">
+              {{ g.numberType }}
+            </span>
+            <span class="group-prob">{{ g.probability }}%</span>
+          </li>
+        </ul>
+
+        <div v-if="groupChartOption" class="group-chart-wrap">
+          <VChart class="group-chart" :option="groupChartOption" autoresize />
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -118,11 +265,35 @@ function digitColor(d) {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  margin-left: 28px;
+}
+
+.inline-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .pred-inline .label {
   font-size: 11px;
   color: #64748b;
+}
+
+.inline-type {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+
+.inline-type.type-zu3 {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
+}
+
+.inline-type.type-zu6 {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.12);
 }
 
 .inline-combo {
@@ -156,6 +327,164 @@ function digitColor(d) {
   font-weight: 700;
   font-size: 12px;
   box-shadow: 0 1px 4px rgba(251, 191, 36, 0.35);
+}
+
+.btn-pred-group {
+  margin-left: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn-pred-group:hover {
+  background: rgba(251, 191, 36, 0.2);
+  border-color: rgba(251, 191, 36, 0.55);
+}
+
+.group-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.group-dialog {
+  width: min(480px, 100%);
+  max-height: min(94vh, 740px);
+  overflow: hidden;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  padding: 16px 18px 18px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+}
+
+.group-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.group-dialog-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.group-dialog-sub {
+  margin: 0;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.group-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.group-close:hover {
+  color: #f8fafc;
+  background: rgba(248, 113, 113, 0.2);
+}
+
+.group-list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.group-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.group-rank {
+  width: 18px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  text-align: center;
+}
+
+.group-nums {
+  display: flex;
+  gap: 3px;
+  flex: 1;
+}
+
+.group-ball {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #fbbf24, #f59e0b);
+  color: #1c1917;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.group-type {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+.group-type.type-zu3 {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+}
+.group-type.type-zu6 {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.12);
+}
+
+.group-prob {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fbbf24;
+  min-width: 42px;
+  text-align: right;
+}
+
+.group-chart-wrap {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 12px;
+}
+
+.group-chart {
+  width: 100%;
+  height: 220px;
 }
 
 .pred-wrap {
@@ -203,8 +532,17 @@ function digitColor(d) {
 .banner-label { font-size: 11px; color: #94a3b8; letter-spacing: 0.5px; }
 .banner-pattern { font-size: 16px; font-weight: 800; color: #fbbf24; letter-spacing: 1px; }
 .banner-pattern.oe { color: #22d3ee; letter-spacing: 0.5px; }
+.banner-pattern.type { color: #34d399; letter-spacing: 0.5px; }
 .banner-prob { font-size: 13px; font-weight: 700; color: #fbbf24; padding: 1px 8px; border-radius: 8px; background: rgba(251, 191, 36, 0.15); }
 .banner-prob.oe { color: #22d3ee; background: rgba(34, 211, 238, 0.14); }
+.banner-prob.type { color: #34d399; background: rgba(52, 211, 153, 0.14); }
+
+.type-signal {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.4;
+}
 .banner-divider { width: 1px; height: 16px; background: rgba(255, 255, 255, 0.12); margin: 0 4px; }
 .banner-sum { font-size: 16px; font-weight: 800; color: #60a5fa; }
 
@@ -311,6 +649,11 @@ function digitColor(d) {
 
 .oe-pill b { color: #22d3ee; margin: 0 2px; font-weight: 800; }
 .oe-prob { color: #22d3ee; opacity: 0.75; font-size: 10px; margin-left: 2px; }
+
+.type-pill { font-weight: 700; }
+.type-zu3 { color: #fbbf24; background: rgba(251, 191, 36, 0.1); }
+.type-zu6 { color: #34d399; background: rgba(52, 211, 153, 0.1); }
+.type-prob { font-size: 10px; opacity: 0.8; margin-left: 4px; font-weight: 600; }
 
 .legend-row {
   display: flex;
