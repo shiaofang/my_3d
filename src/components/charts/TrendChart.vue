@@ -44,10 +44,14 @@ const option = computed(() => {
         const draw = props.draws[params[0]?.dataIndex]
         if (!draw) return ''
         const nums = draw.digits.join(' ')
+        const lines = params
+          .map((p) => `<div><span style="color:${p.color}">●</span> ${p.seriesName}: ${p.value}</div>`)
+          .join('')
         return `<div style="font-weight:600;margin-bottom:4px">期号 ${draw.issue}</div>
           <div>${draw.kjdate}</div>
           <div style="margin-top:6px;font-size:16px;color:#fbbf24">开奖: ${nums}</div>
-          <div style="margin-top:4px;color:#94a3b8">和值 ${draw.sum} · ${draw.type}</div>`
+          <div style="margin-top:4px;color:#94a3b8">和值 ${draw.sum} · ${draw.type}</div>
+          <div style="margin-top:6px">${lines}</div>`
       },
     },
     legend: {
@@ -55,7 +59,7 @@ const option = computed(() => {
       textStyle: { color: '#94a3b8' },
       top: 0,
     },
-    grid: { left: 48, right: 24, top: 48, bottom: 72 },
+    grid: { left: 52, right: 24, top: 48, bottom: 72, containLabel: true },
     xAxis: {
       type: 'category',
       data: issues,
@@ -67,7 +71,10 @@ const option = computed(() => {
       min: 0,
       max: 9,
       interval: 1,
+      boundaryGap: ['12%', '12%'],
       axisLabel: { color: '#64748b' },
+      axisLine: { show: true, lineStyle: { color: '#334155' } },
+      axisTick: { show: true, lineStyle: { color: '#334155' } },
       splitLine: { lineStyle: { color: '#1e293b' } },
     },
     dataZoom: [
@@ -86,6 +93,6 @@ const option = computed(() => {
 <style scoped>
 .chart {
   width: 100%;
-  height: 280px;
+  height: 380px;
 }
 </style>

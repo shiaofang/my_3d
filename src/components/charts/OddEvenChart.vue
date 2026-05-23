@@ -10,6 +10,7 @@ import {
   MarkLineComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import { avgMarkLine } from '../../utils/chartAvgMarkLine.js'
 
 use([BarChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, CanvasRenderer])
 
@@ -129,7 +130,7 @@ const option = computed(() => {
         )
       },
     },
-    grid: { top: 56, right: 24, bottom: 56, left: 52, containLabel: true },
+    grid: { top: 56, right: 24, bottom: 56, left: 56, containLabel: true },
     xAxis: {
       type: 'category',
       data: stats.map((d) => d.label),
@@ -197,18 +198,7 @@ const option = computed(() => {
             gap: { color: '#fb923c', fontSize: 11, fontWeight: 'bold', lineHeight: 16 },
           },
         },
-        markLine: {
-          silent: true,
-          symbol: 'none',
-          lineStyle: { color: '#64748b', type: 'dashed', width: 1 },
-          label: {
-            formatter: '理论 25%',
-            color: '#64748b',
-            fontSize: 11,
-            position: 'insideEndTop',
-          },
-          data: [{ yAxis: THEOR_PCT }],
-        },
+        markLine: avgMarkLine(pcts),
       },
     ],
   }

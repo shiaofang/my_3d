@@ -10,6 +10,7 @@ import {
   MarkLineComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import { avgMarkLine } from '../../utils/chartAvgMarkLine.js'
 
 use([BarChart, LineChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, CanvasRenderer])
 
@@ -133,22 +134,21 @@ const option = computed(() => {
         )
       },
     },
-    grid: { top: 56, right: 24, bottom: 56, left: 52, containLabel: true },
+    grid: { top: 56, right: 24, bottom: 64, left: 56, containLabel: true },
     xAxis: {
       type: 'category',
-      data: stats.map((d) => `${d.label}(${d.count}次)`),
+      data: stats.map((d) => d.label),
       axisLabel: {
         interval: 0,
-        fontSize: 12,
-        formatter(value) {
-          const m = value.match(/^(.+)\((\d+)次\)$/)
-          const name = m ? m[1] : value
-          const cnt = m ? m[2] : '0'
-          return `{name|${name}}{cnt|（${cnt}次）}`
+        align: 'center',
+        lineHeight: 18,
+        formatter(_value, idx) {
+          const d = stats[idx]
+          return `{name|${d.label}}\n{cnt|（${d.count}次）}`
         },
         rich: {
-          name: { color: '#94a3b8', fontSize: 13, fontWeight: 'bold' },
-          cnt:  { color: '#64748b', fontSize: 11 },
+          name: { color: '#94a3b8', fontSize: 13, fontWeight: 'bold', lineHeight: 20, align: 'center' },
+          cnt:  { color: '#64748b', fontSize: 11, lineHeight: 15, align: 'center' },
         },
       },
       axisLine: { lineStyle: { color: '#334155' } },
@@ -201,18 +201,7 @@ const option = computed(() => {
             gap: { color: '#fb923c', fontSize: 11, fontWeight: 'bold', lineHeight: 16 },
           },
         },
-        markLine: {
-          silent: true,
-          symbol: 'none',
-          lineStyle: { color: '#64748b', type: 'dashed', width: 1 },
-          label: {
-            formatter: '理论 12.5%',
-            color: '#64748b',
-            fontSize: 11,
-            position: 'insideEndTop',
-          },
-          data: [{ yAxis: 12.5 }],
-        },
+        markLine: avgMarkLine(pcts),
       },
     ],
   }

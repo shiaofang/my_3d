@@ -1,20 +1,87 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
+import { TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import 'echarts-gl'
 
-use([CanvasRenderer])
+use([TooltipComponent, CanvasRenderer])
 
 const props = defineProps({
   combinationFrequency: { type: Array, default: () => [] },
 })
 
-const option = computed(() => {
-  const freq = props.combinationFrequency
-  if (!freq.length) return {}
+const GRADIENT = ['#16a34a', '#65a30d', '#eab308', '#f97316', '#ef4444', '#b91c1c']
 
+const dataMin = ref(0)
+const dataMax = ref(1)
+const filterMin = ref(0)
+const filterMax = ref(1)
+/** After first render, only push series updates so 3D view is preserved. */
+const viewLocked = ref(false)
+
+// computed option always returns a new reference; force merge so slider updates don't replace the whole chart
+const chartUpdateOptions = { notMerge: false, replaceMerge: ['series'] }
+
+watch(
+  () => props.combinationFrequency,
+  (freq) => {
+    if (!freq.length) return
+    const min = Math.min(...freq)
+    const max = Math.max(...freq, 1)
+    dataMin.value = min
+    dataMax.value = max
+    filterMin.value = min
+    filterMax.value = max
+    viewLocked.value = false
+  },
+  { immediate: true },
+)
+
+function lockView() {
+  viewLocked.value = true
+}
+
+function lerpColor(hex1, hex2, t) {
+  const r1 = parseInt(hex1.slice(1, 3), 16)
+  const g1 = parseInt(hex1.slice(3, 5), 16)
+  const b1 = parseInt(hex1.slice(5, 7), 16)
+  const r2 = parseInt(hex2.slice(1, 3), 16)
+  const g2 = parseInt(hex2.slice(3, 5), 16)
+  const b2 = parseInt(hex2.slice(5, 7), 16)
+  const r = Math.round(r1 + (r2 - r1) * t)
+  const g = Math.round(g1 + (g2 - g1) * t)
+  const b = Math.round(b1 + (b2 - b1) * t)
+  return `rgb(${r},${g},${b})`
+}
+
+function freqColor(count, minVal, maxVal) {
+  const t = (count - minVal) / (maxVal - minVal || 1)
+  const idx = t * (GRADIENT.length - 1)
+  const lo = Math.floor(idx)
+  const hi = Math.min(lo + 1, GRADIENT.length - 1)
+  return lerpColor(GRADIENT[lo], GRADIENT[hi], idx - lo)
+}
+
+function onMinInput(e) {
+  const v = Number(e.target.value)
+  filterMin.value = Math.min(v, filterMax.value)
+}
+
+function onMaxInput(e) {
+  const v = Number(e.target.value)
+  filterMax.value = Math.max(v, filterMin.value)
+}
+
+const rangeTrackStyle = computed(() => {
+  const span = dataMax.value - dataMin.value || 1
+  const left = ((filterMin.value - dataMin.value) / span) * 100
+  const right = ((dataMax.value - filterMax.value) / span) * 100
+  return { left: `${left}%`, right: `${right}%` }
+})
+
+function buildSeriesData(freq, lo, hi, minVal, maxVal) {
   const data = []
   for (let num = 0; num < 1000; num++) {
     const hundreds = Math.floor(num / 100)
@@ -22,7 +89,52 @@ const option = computed(() => {
     data.push([hundreds, lastTwo, freq[num] ?? 0])
   }
 
-  const maxVal = Math.max(...freq, 1)
+  return data.map((item) => {
+    const count = item[2]
+    const inRange = count >= lo && count <= hi
+    return {
+      value: item,
+      itemStyle: {
+        color: freqColor(count, minVal, maxVal),
+        opacity: inRange ? 0.95 : 0.06,
+      },
+    }
+  })
+}
+
+function buildSeries(freq, lo, hi, minVal, maxVal) {
+  return {
+    type: 'bar3D',
+    data: buildSeriesData(freq, lo, hi, minVal, maxVal),
+    shading: 'color',
+    barSize: 2.8,
+    emphasis: {
+      itemStyle: { opacity: 1, color: '#ffffff' },
+      label: {
+        show: true,
+        formatter(p) {
+          const [h, lt, cnt] = p.value
+          return String(h * 100 + lt).padStart(3, '0') + '\n' + cnt + '次'
+        },
+        textStyle: { color: '#fff', fontSize: 11 },
+      },
+    },
+  }
+}
+
+const option = computed(() => {
+  const freq = props.combinationFrequency
+  if (!freq.length) return {}
+
+  const minVal = dataMin.value
+  const maxVal = dataMax.value
+  const lo = filterMin.value
+  const hi = filterMax.value
+  const series = buildSeries(freq, lo, hi, minVal, maxVal)
+
+  if (viewLocked.value) {
+    return { series: [series] }
+  }
 
   const lastTwoLabels = Array.from({ length: 100 }, (_, i) =>
     i % 10 === 0 ? String(i).padStart(2, '0') : '',
@@ -39,20 +151,6 @@ const option = computed(() => {
         const combo = String(h * 100 + lt).padStart(3, '0')
         return `组合 <b>${combo}</b><br/>出现 <b style="color:#fbbf24">${cnt}</b> 次`
       },
-    },
-    visualMap: {
-      max: maxVal,
-      min: 0,
-      inRange: {
-        color: ['#16a34a', '#65a30d', '#eab308', '#f97316', '#ef4444', '#b91c1c'],
-      },
-      textStyle: { color: '#cbd5e1', fontSize: 12 },
-      calculable: true,
-      orient: 'horizontal',
-      left: 'center',
-      bottom: 4,
-      itemWidth: 14,
-      itemHeight: 120,
     },
     xAxis3D: {
       type: 'category',
@@ -89,7 +187,8 @@ const option = computed(() => {
       boxHeight: 80,
       environment: 'rgba(15, 23, 42, 0.6)',
       viewControl: {
-        autoRotate: false,
+        autoRotate: true,
+        autoRotateSpeed: 4,
         rotateSensitivity: 1.5,
         zoomSensitivity: 1.2,
         panSensitivity: 1,
@@ -106,36 +205,55 @@ const option = computed(() => {
       postEffect: { enable: false },
       temporalSuperSampling: { enable: false },
     },
-    series: [
-      {
-        type: 'bar3D',
-        data: data.map((item) => ({
-          value: item,
-          itemStyle: { opacity: 0.95 },
-        })),
-        shading: 'color',
-        barSize: 2.8,
-        emphasis: {
-          itemStyle: { opacity: 1, color: '#ffffff' },
-          label: {
-            show: true,
-            formatter(p) {
-              const [h, lt, cnt] = p.value
-              return String(h * 100 + lt).padStart(3, '0') + '\n' + cnt + '次'
-            },
-            textStyle: { color: '#fff', fontSize: 11 },
-          },
-        },
-      },
-    ],
+    series: [series],
   }
 })
 </script>
 
 <template>
   <div class="chart-wrap">
-    <div class="hint">鼠标拖拽旋转 · 滚轮缩放 · 右键平移</div>
-    <VChart :option="option" autoresize class="chart" />
+    <div class="hint">自动缓慢旋转 · 鼠标拖拽旋转 · 滚轮缩放 · 底部滑块筛选次数</div>
+    <VChart
+      :option="option"
+      :update-options="chartUpdateOptions"
+      autoresize
+      class="chart"
+      @rendered="lockView"
+    />
+
+    <div v-if="combinationFrequency.length" class="range-panel">
+      <div class="range-header">
+        <span class="range-title">次数范围</span>
+        <span class="range-value">{{ filterMin }} — {{ filterMax }} 次</span>
+      </div>
+
+      <div class="dual-slider">
+        <div class="slider-track" />
+        <div class="slider-active" :style="rangeTrackStyle" />
+        <input
+          type="range"
+          class="thumb thumb-min"
+          :min="dataMin"
+          :max="dataMax"
+          :value="filterMin"
+          @input="onMinInput"
+        />
+        <input
+          type="range"
+          class="thumb thumb-max"
+          :min="dataMin"
+          :max="dataMax"
+          :value="filterMax"
+          @input="onMaxInput"
+        />
+      </div>
+
+      <div class="range-labels">
+        <span>低 {{ dataMin }}</span>
+        <span class="gradient-bar" />
+        <span>高 {{ dataMax }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -159,5 +277,151 @@ const option = computed(() => {
 .chart {
   width: 100%;
   height: 380px;
+}
+
+.range-panel {
+  padding: 4px 8px 0;
+}
+
+.range-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.range-title {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.range-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fbbf24;
+  font-variant-numeric: tabular-nums;
+}
+
+.dual-slider {
+  position: relative;
+  height: 28px;
+}
+
+.slider-track {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    #16a34a,
+    #65a30d,
+    #eab308,
+    #f97316,
+    #ef4444,
+    #b91c1c
+  );
+  opacity: 0.35;
+}
+
+.slider-active {
+  position: absolute;
+  top: 50%;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    #16a34a,
+    #65a30d,
+    #eab308,
+    #f97316,
+    #ef4444,
+    #b91c1c
+  );
+  pointer-events: none;
+}
+
+.thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f8fafc;
+  border: 2px solid #fbbf24;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.thumb::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f8fafc;
+  border: 2px solid #fbbf24;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.thumb::-webkit-slider-runnable-track {
+  background: transparent;
+  height: 8px;
+}
+
+.thumb::-moz-range-track {
+  background: transparent;
+  height: 8px;
+}
+
+.thumb-max {
+  z-index: 2;
+}
+
+.thumb-min {
+  z-index: 3;
+}
+
+.range-labels {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.gradient-bar {
+  flex: 1;
+  height: 3px;
+  margin: 0 12px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    #16a34a,
+    #65a30d,
+    #eab308,
+    #f97316,
+    #ef4444,
+    #b91c1c
+  );
+  opacity: 0.6;
 }
 </style>

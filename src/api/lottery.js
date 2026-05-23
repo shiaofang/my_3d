@@ -4,9 +4,9 @@ const BASE_URL = import.meta.env.DEV
   ? '/api/sd/getTbList'
   : 'https://tb.tuganjue.com/api/sd/getTbList'
 
-const PAGE_SIZE = 300
+export const PAGE_SIZE = 300
 
-async function fetchPage({ page, limit, orderby, startIssue, endIssue, week }) {
+export async function fetchPage({ page, limit, orderby, startIssue, endIssue, week }) {
   const { data } = await axios.get(BASE_URL, {
     params: {
       action: 'kjfb',
@@ -45,4 +45,26 @@ export async function fetchLotteryList({
   )
   const results = await Promise.all(requests)
   return results.flat().slice(0, limit).reverse()
+}
+
+/** Fetch the newest batch (chronological). */
+export async function fetchLatestBatch(limit = PAGE_SIZE) {
+  const batch = await fetchPage({ page: 1, limit, orderby: 'desc' })
+  return batch.reverse()
+}
+
+/** Fetch older records beyond what is already cached. */
+export async function fetchOlderRecords({ alreadyHave, need }) {
+  if (need <= 0) return []
+  const startPage = Math.ceil(alreadyHave / PAGE_SIZE) + 1
+  const pages = Math.ceil(need / PAGE_SIZE)
+  const requests = Array.from({ length: pages }, (_, i) =>
+    fetchPage({
+      page: startPage + i,
+      limit: PAGE_SIZE,
+      orderby: 'desc',
+    }),
+  )
+  const results = await Promise.all(requests)
+  return results.flat().slice(0, need).reverse()
 }

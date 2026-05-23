@@ -43,9 +43,7 @@ const TYPE_CLASS = {
 
 <style scoped>
 .table-wrap {
-  overflow-x: auto;
-  border-radius: 12px;
-  border: 1px solid var(--border);
+  overflow: visible;
 }
 
 table {
@@ -62,11 +60,9 @@ td {
 }
 
 th {
-  background: rgba(251, 191, 36, 0.08);
+  background: color-mix(in srgb, #fbbf24 6%, transparent);
   color: var(--text-h);
   font-weight: 600;
-  position: sticky;
-  top: 0;
 }
 
 tbody tr:hover {

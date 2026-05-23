@@ -1,6 +1,14 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { buildPrediction, patternIdxOf, oeCatOf, PATTERN_LABELS, OE_LABELS } from '../utils/predict.js'
+import {
+  computeAllPositionTransitions,
+  formatTransitionPct,
+  sliceDrawsThroughIssue,
+  transitionBarWidth,
+} from '../utils/transition.js'
+
+const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 const props = defineProps({
   /** Full chronological draws from the store (oldest → newest) */
@@ -24,11 +32,24 @@ function maxDigitMatch(recs, actual) {
   return Math.max(...recs.map((r) => countDigitMatches(r.digits, actual)), 0)
 }
 
+/** 下期：优先测试集内，否则从全量历史中取下一期 */
+function resolveNextDraw(testDraws, index, allDraws) {
+  if (testDraws[index + 1]) return testDraws[index + 1]
+  const cur = testDraws[index]
+  const idx = allDraws.findIndex((d) => String(d.issue) === String(cur?.issue))
+  return idx >= 0 && idx < allDraws.length - 1 ? allDraws[idx + 1] : null
+}
+
+function canShowTransition(row) {
+  return Array.isArray(row.transition) && row.transition.length > 0
+}
+
 // ── Run backtest ──────────────────────────────────────────
 async function runBacktest() {
   if (!props.draws.length) return
   running.value = true
   results.value = null
+  page.value = 1
 
   // Yield to render the spinner
   await new Promise((r) => setTimeout(r, 30))
@@ -49,8 +70,14 @@ async function runBacktest() {
     const rows = []
     let historyDraws = [...trainDraws]
 
-    for (const testDraw of testDraws) {
+    for (let i = 0; i < testDraws.length; i++) {
+      const testDraw = testDraws[i]
+      const nextDraw = resolveNextDraw(testDraws, i, props.draws)
       const pred = buildPrediction(historyDraws)
+      const historySlice = sliceDrawsThroughIssue(props.draws, testDraw.issue)
+      const transition = testDraw.digits
+        ? computeAllPositionTransitions(historySlice, testDraw.digits)
+        : null
 
       if (pred) {
         const actualPatLabel = PATTERN_LABELS[patternIdxOf(testDraw)]
@@ -76,6 +103,11 @@ async function runBacktest() {
           bothHit:       patHit && oeHit,
           maxMatch,
           exactHit,
+          nextIssue:     nextDraw?.issue ?? '',
+          nextDate:      nextDraw?.kjdate ?? '',
+          nextDigits:    nextDraw?.digits ?? null,
+          transition,
+          hasNext:       !!nextDraw,
         })
       }
 
@@ -128,6 +160,23 @@ const pagedRows = computed(() => {
 const totalPages = computed(() => Math.ceil((results.value?.rows?.length ?? 0) / PAGE_SIZE))
 
 // Stat cards config
+const transitionModal = ref(null)
+
+function openTransitionModal(row) {
+  if (!canShowTransition(row)) return
+  transitionModal.value = row
+}
+
+function closeTransitionModal() {
+  transitionModal.value = null
+}
+
+function transitionTopHit(pos) {
+  if (!pos || pos.topDigit == null || !transitionModal.value?.hasNext) return false
+  const next = transitionModal.value?.nextDigits?.[pos.key]
+  return next === pos.topDigit
+}
+
 const statCards = computed(() => {
   if (!results.value?.stats) return []
   const s = results.value.stats
@@ -223,6 +272,13 @@ const statCards = computed(() => {
               <td>
                 <span class="ball-row">
                   <span v-for="(d, i) in row.actual" :key="i" class="mini-ball">{{ d }}</span>
+                  <button
+                    v-if="canShowTransition(row)"
+                    type="button"
+                    class="trans-btn"
+                    title="位置转移概率推测"
+                    @click="openTransitionModal(row)"
+                  >↗</button>
                 </span>
               </td>
               <td class="mono sum-val">{{ row.actualSum }}</td>
@@ -263,6 +319,119 @@ const statCards = computed(() => {
         </table>
       </div>
     </template>
+
+    <!-- 转移概率弹窗 -->
+    <Teleport to="body">
+      <div
+        v-if="transitionModal"
+        class="trans-overlay"
+        @click.self="closeTransitionModal"
+      >
+        <div class="trans-dialog" role="dialog" aria-labelledby="trans-dialog-title">
+          <div class="trans-dialog-head">
+            <div>
+              <h3 id="trans-dialog-title" class="trans-dialog-title">
+                位置转移概率推测
+              </h3>
+              <p class="trans-dialog-sub">
+                第 <b>{{ transitionModal.issue }}</b> 期（{{ transitionModal.date }}）
+                · 基于本期开奖推算下期（转移统计 + 遗漏加权，截至本期）
+              </p>
+            </div>
+            <button type="button" class="trans-close" @click="closeTransitionModal">×</button>
+          </div>
+
+          <div class="trans-prev">
+            <span class="trans-prev-label">本期开奖</span>
+            <span class="mono">{{ transitionModal.issue }}</span>
+            <span class="mono dim">{{ transitionModal.date }}</span>
+            <span class="ball-row">
+              <span
+                v-for="(d, i) in transitionModal.actual"
+                :key="i"
+                class="mini-ball cur"
+              >{{ d }}</span>
+            </span>
+          </div>
+
+          <div class="trans-actual">
+            <span class="trans-prev-label">下期实际</span>
+            <template v-if="transitionModal.hasNext && transitionModal.nextDigits">
+              <span class="mono">{{ transitionModal.nextIssue }}</span>
+              <span class="mono dim">{{ transitionModal.nextDate }}</span>
+              <span class="ball-row">
+                <span
+                  v-for="(d, i) in transitionModal.nextDigits"
+                  :key="i"
+                  class="mini-ball actual"
+                >{{ d }}</span>
+              </span>
+            </template>
+            <span v-else class="trans-pending">暂无下期数据（可查看推测概率）</span>
+          </div>
+
+          <div class="trans-pos-row">
+          <div
+            v-for="pos in transitionModal.transition"
+            :key="pos.key"
+            class="trans-pos-block"
+          >
+            <div class="trans-pos-head">
+              <span class="trans-pos-label" :style="{ color: pos.color }">{{ pos.label }}</span>
+              <span class="trans-pos-from">
+                本期 <b :style="{ color: pos.color }">{{ pos.fromDigit }}</b>
+                → 转移样本 {{ pos.sampleSize }} 次
+              </span>
+              <span
+                v-if="pos.sampleSize > 0"
+                :class="[
+                  'trans-pred-tag',
+                  transitionModal.hasNext
+                    ? (transitionTopHit(pos) ? 'hit' : 'miss')
+                    : 'pending',
+                ]"
+              >
+                推测 Top1：<b>{{ pos.topDigit }}</b>
+                <template v-if="transitionModal.hasNext">
+                  {{ transitionTopHit(pos) ? '✓ 命中' : '✗ 未中' }}
+                </template>
+              </span>
+              <span v-else class="trans-pred-tag na">无历史样本</span>
+            </div>
+
+            <div v-if="pos.sampleSize > 0" class="trans-grid">
+              <div
+                v-for="d in DIGITS"
+                :key="d"
+                class="trans-cell"
+                :class="{
+                  'is-actual': transitionModal.hasNext && d === transitionModal.nextDigits?.[pos.key],
+                  'is-top': d === pos.topDigit,
+                }"
+              >
+                <span class="trans-digit">{{ d }}</span>
+                <div class="trans-bar-track">
+                  <div
+                    class="trans-bar-fill"
+                    :style="{
+                      width: transitionBarWidth(pos.percents[d], pos.percents),
+                      background: pos.color,
+                    }"
+                  />
+                </div>
+                <span class="trans-pct" :title="`转移占比 ${formatTransitionPct(pos.rawPercents[d])}%`">
+                  {{ formatTransitionPct(pos.percents[d]) }}%
+                </span>
+              </div>
+            </div>
+            <div v-else class="trans-empty-pos">
+              历史中 {{ pos.label }} 未出现过 {{ pos.fromDigit }}，无法统计转移
+            </div>
+          </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -482,7 +651,238 @@ const statCards = computed(() => {
 .dt   { font-size: 11px; }
 .dim  { color: #64748b; font-size: 11px; }
 
-.ball-row { display: flex; justify-content: center; gap: 3px; }
+.ball-row { display: flex; justify-content: center; align-items: center; gap: 3px; }
+
+.trans-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  background: rgba(30, 41, 59, 0.8);
+  color: #94a3b8;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.trans-btn:hover {
+  border-color: #fbbf24;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.trans-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.trans-dialog {
+  width: min(1020px, 100%);
+  max-height: min(90vh, 720px);
+  overflow-y: auto;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  padding: 18px 20px 20px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+}
+
+.trans-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.trans-dialog-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.trans-dialog-sub {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+.trans-dialog-sub b { color: #94a3b8; }
+
+.trans-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.trans-close:hover { color: #f8fafc; background: rgba(248, 113, 113, 0.2); }
+
+.trans-prev,
+.trans-actual {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: rgba(30, 41, 59, 0.45);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.trans-prev-label {
+  color: #64748b;
+  font-weight: 600;
+  min-width: 56px;
+}
+
+.mini-ball.cur {
+  background: linear-gradient(145deg, #64748b, #475569);
+  color: #f1f5f9;
+}
+.mini-ball.actual {
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.45);
+}
+
+.trans-pos-row {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.trans-pos-block {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 10px;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+}
+
+.trans-pos-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.trans-pos-label {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.trans-pos-from {
+  color: #94a3b8;
+}
+.trans-pos-from b { font-family: monospace; font-size: 14px; }
+
+.trans-pred-tag {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.trans-pred-tag.hit { background: rgba(74, 222, 128, 0.15); color: #4ade80; }
+.trans-pred-tag.miss { background: rgba(248, 113, 113, 0.12); color: #f87171; }
+.trans-pred-tag.pending { background: rgba(251, 191, 36, 0.12); color: #fbbf24; }
+.trans-pred-tag.na { background: rgba(148, 163, 184, 0.1); color: #64748b; }
+
+.trans-pending {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.trans-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+}
+
+@media (max-width: 720px) {
+  .trans-pos-row {
+    flex-direction: column;
+  }
+}
+
+.trans-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 4px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid transparent;
+}
+.trans-cell.is-actual {
+  border-color: #4ade80;
+  background: rgba(74, 222, 128, 0.08);
+}
+.trans-cell.is-top:not(.is-actual) {
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
+.trans-digit {
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.trans-bar-track {
+  width: 100%;
+  height: 4px;
+  background: #1e293b;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.trans-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  min-width: 1px;
+  transition: width 0.2s;
+}
+
+.trans-pct {
+  font-size: 10px;
+  color: #64748b;
+  font-family: monospace;
+}
+.trans-cell.is-actual .trans-pct,
+.trans-cell.is-top .trans-pct {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.trans-empty-pos {
+  font-size: 12px;
+  color: #64748b;
+  padding: 8px 0;
+}
+
 .mini-ball {
   display: inline-flex;
   align-items: center;

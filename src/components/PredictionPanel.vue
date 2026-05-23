@@ -3,6 +3,7 @@ import { computed } from 'vue'
 
 const props = defineProps({
   prediction: { type: Object, default: null },
+  compact: { type: Boolean, default: false },
 })
 
 const RANK_STYLES = [
@@ -22,7 +23,25 @@ function digitColor(d) {
 </script>
 
 <template>
-  <div v-if="prediction && prediction.recommendations.length" class="pred-wrap">
+  <div v-if="prediction && prediction.recommendations.length && compact" class="pred-inline">
+    <span class="label">下期推荐号码</span>
+    <div class="inline-combos">
+      <div
+        v-for="(rec, idx) in topTwo"
+        :key="idx"
+        class="inline-combo"
+        :title="`${styleFor(idx).tag} · 和值 ${rec.sum} · 形态 ${rec.pattern} · 奇偶比 ${rec.oddEvenRatio}`"
+      >
+        <span class="inline-tag" :style="{ color: styleFor(idx).accent }">{{ styleFor(idx).tag }}</span>
+        <span class="inline-nums">
+          <span v-for="(n, i) in rec.digits" :key="i" class="inline-ball">{{ n }}</span>
+        </span>
+        <span class="inline-sum">{{ rec.sum }}</span>
+      </div>
+    </div>
+  </div>
+
+  <div v-else-if="prediction && prediction.recommendations.length" class="pred-wrap">
     <div class="pred-header">
       <div class="title-row">
         <span class="pred-title">⭐ 下期推荐号码</span>
@@ -117,6 +136,68 @@ function digitColor(d) {
 </template>
 
 <style scoped>
+.pred-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pred-inline .label {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.inline-combos {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.inline-combo {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: default;
+}
+
+.inline-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  min-width: 24px;
+}
+
+.inline-nums {
+  display: flex;
+  gap: 3px;
+}
+
+.inline-ball {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #fbbf24, #f59e0b);
+  color: #1c1917;
+  font-weight: 700;
+  font-size: 12px;
+  box-shadow: 0 1px 4px rgba(251, 191, 36, 0.35);
+}
+
+.inline-combo:nth-child(2) .inline-ball {
+  background: linear-gradient(145deg, #c7d2fe, #a5b4fc);
+  box-shadow: 0 2px 6px rgba(165, 180, 252, 0.35);
+}
+
+.inline-sum {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
 .pred-wrap {
   margin: 0 32px 8px;
   padding: 18px 24px 14px;
@@ -316,5 +397,7 @@ function digitColor(d) {
   .pred-wrap { margin: 0 16px 8px; padding: 14px 14px 12px; }
   .combos { grid-template-columns: 1fr; }
   .legend-row { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .pred-inline { width: auto; }
+  .inline-combos { gap: 12px; }
 }
 </style>

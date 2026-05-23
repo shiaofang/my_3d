@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { fetchLotteryList } from '../api/lottery'
+import { fetchLotteryList, fetchLatestBatch, fetchOlderRecords, PAGE_SIZE } from '../api/lottery'
+import { readCache, writeCache, mergeRecords } from '../utils/lotteryCache'
 import { parseWinnum, calcSum, calcSpan, getNumberType } from '../utils/parser'
 
 const POSITIONS = ['百位', '十位', '个位']
@@ -20,7 +21,10 @@ function enrichDraw(raw) {
 export const useLotteryStore = defineStore('lottery', {
   state: () => ({
     draws: [],
+    /** Full chronological cache (enriched), used for limit slicing without re-fetch */
+    fullCache: [],
     loading: false,
+    syncing: false,
     error: null,
     limit: 50,
   }),
@@ -340,17 +344,63 @@ export const useLotteryStore = defineStore('lottery', {
   },
 
   actions: {
-    async loadData(limit = this.limit) {
-      this.loading = true
+    applyLimit(limit) {
+      this.draws = this.fullCache.slice(-limit)
+      this.limit = limit
+    },
+
+    setFromRaw(rawRecords, limit) {
+      this.fullCache = rawRecords.map(enrichDraw)
+      this.applyLimit(limit)
+    },
+
+    async loadData(limit = this.limit, { refresh = false } = {}) {
       this.error = null
+      const cached = await readCache()
+      let rawRecords = cached?.records ?? []
+
+      if (rawRecords.length) {
+        this.setFromRaw(rawRecords, limit)
+        this.loading = false
+      } else {
+        this.loading = true
+      }
+
+      this.syncing = true
       try {
-        const raw = await fetchLotteryList({ limit })
-        this.draws = raw.map(enrichDraw)
-        this.limit = limit
+        if (refresh && rawRecords.length) {
+          rawRecords = mergeRecords(rawRecords, await fetchLatestBatch(PAGE_SIZE))
+          await writeCache(rawRecords)
+          this.setFromRaw(rawRecords, limit)
+        } else if (refresh) {
+          rawRecords = await fetchLotteryList({ limit })
+          await writeCache(rawRecords)
+          this.setFromRaw(rawRecords, limit)
+        } else if (rawRecords.length >= limit) {
+          rawRecords = mergeRecords(rawRecords, await fetchLatestBatch(PAGE_SIZE))
+          await writeCache(rawRecords)
+          this.setFromRaw(rawRecords, limit)
+        } else if (rawRecords.length > 0) {
+          const need = limit - rawRecords.length
+          const [latest, older] = await Promise.all([
+            fetchLatestBatch(PAGE_SIZE),
+            fetchOlderRecords({ alreadyHave: rawRecords.length, need }),
+          ])
+          rawRecords = mergeRecords(mergeRecords(rawRecords, latest), older)
+          await writeCache(rawRecords)
+          this.setFromRaw(rawRecords, limit)
+        } else {
+          rawRecords = await fetchLotteryList({ limit })
+          await writeCache(rawRecords)
+          this.setFromRaw(rawRecords, limit)
+        }
       } catch (err) {
-        this.error = err.message || '加载数据失败'
+        if (!this.draws.length) {
+          this.error = err.message || '加载数据失败'
+        }
       } finally {
         this.loading = false
+        this.syncing = false
       }
     },
   },
