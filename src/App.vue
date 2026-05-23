@@ -6,7 +6,12 @@ import TrendChart from './components/charts/TrendChart.vue'
 import FrequencyChart from './components/charts/FrequencyChart.vue'
 import SumTrendChart from './components/charts/SumTrendChart.vue'
 import Chart3D from './components/charts/Chart3D.vue'
-import OmissionHeatmap from './components/charts/OmissionHeatmap.vue'
+import Combination3DChart from './components/charts/Combination3DChart.vue'
+import UpDownChart from './components/charts/UpDownChart.vue'
+import OddEvenChart from './components/charts/OddEvenChart.vue'
+import PredictionPanel from './components/PredictionPanel.vue'
+import BacktestPanel from './components/BacktestPanel.vue'
+import FilterPanel from './components/FilterPanel.vue'
 import DrawTable from './components/DrawTable.vue'
 
 const store = useLotteryStore()
@@ -18,9 +23,10 @@ const {
   latestDraws,
   latestDraw,
   positionFrequency,
+  combinationFrequency,
+  nextPrediction,
   sumSeries,
   typeStats,
-  omissionMatrix,
 } = storeToRefs(store)
 
 onMounted(() => store.loadData())
@@ -39,9 +45,14 @@ onMounted(() => store.loadData())
         </div>
         <div class="header-actions">
           <select v-model="limit" class="limit-select" @change="store.loadData(limit)">
+            <option :value="50">最近 50 期</option>
             <option :value="100">最近 100 期</option>
-            <option :value="200">最近 200 期</option>
-            <option :value="300">最近 300 期</option>
+            <option :value="500">最近 500 期</option>
+            <option :value="1000">最近 1000 期</option>
+            <option :value="3000">最近 3000 期</option>
+            <option :value="5000">最近 5000 期</option>
+            <option :value="8000">最近 8000 期</option>
+            <option :value="10000">最近 10000 期</option>
           </select>
           <button class="btn-refresh" :disabled="loading" @click="store.loadData(limit)">
             {{ loading ? '加载中…' : '刷新数据' }}
@@ -75,6 +86,8 @@ onMounted(() => store.loadData())
       </div>
     </header>
 
+    <PredictionPanel v-if="!loading && nextPrediction" :prediction="nextPrediction" />
+
     <div v-if="error" class="error-banner">{{ error }}</div>
 
     <main v-if="!loading && chronDraws.length" class="dashboard">
@@ -99,6 +112,12 @@ onMounted(() => store.loadData())
 
       <section class="chart-grid">
         <article class="card card-wide">
+          <h2>条件筛选号码</h2>
+          <p class="card-desc">在 000–999 全部号码中，按形态、奇偶比、上下形态、和值范围组合筛选</p>
+          <FilterPanel :draws="chronDraws" />
+        </article>
+
+        <article class="card">
           <h2>号码走势图</h2>
           <p class="card-desc">百位、十位、个位号码随期号变化趋势</p>
           <TrendChart :draws="chronDraws" />
@@ -116,16 +135,34 @@ onMounted(() => store.loadData())
           <FrequencyChart :position-frequency="positionFrequency" />
         </article>
 
-        <article class="card card-wide">
+        <article class="card">
           <h2>3D 频率分布</h2>
-          <p class="card-desc">位置 × 号码 × 出现次数三维柱状图（可拖拽旋转）</p>
+          <p class="card-desc">位置 × 号码 × 出现次数三维柱状图（百位金色、十位青色、个位紫色，频次越高颜色越亮）</p>
           <Chart3D :position-frequency="positionFrequency" />
         </article>
 
+        <article class="card">
+          <h2>000–999 组合频率 3D 图</h2>
+          <p class="card-desc">所有三位数组合（000–999）的出现次数，柱高即频次；鼠标拖拽旋转，滚轮缩放</p>
+          <Combination3DChart :combination-frequency="combinationFrequency" />
+        </article>
+
+        <article class="card">
+          <h2>上下形态分布</h2>
+          <p class="card-desc">0–4 记「上」，5–9 记「下」，三位共 8 种形态 · 含预测概率与遗漏期数</p>
+          <UpDownChart :draws="chronDraws" />
+        </article>
+
+        <article class="card">
+          <h2>奇偶比预测概率</h2>
+          <p class="card-desc">三位中「奇数 : 偶数」的四种组合分布 · 含预测概率与遗漏期数</p>
+          <OddEvenChart :draws="chronDraws" />
+        </article>
+
         <article class="card card-wide">
-          <h2>遗漏热力图</h2>
-          <p class="card-desc">各位置各号码当前遗漏期数，颜色越深遗漏越久</p>
-          <OmissionHeatmap :omission-matrix="omissionMatrix" />
+          <h2>历史回测</h2>
+          <p class="card-desc">选择训练区间与预测跨度，验证模型在历史数据上的实际命中率</p>
+          <BacktestPanel :draws="chronDraws" />
         </article>
 
         <article class="card card-wide">

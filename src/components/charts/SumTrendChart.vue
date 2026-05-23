@@ -29,20 +29,56 @@ const option = computed(() => {
       backgroundColor: 'rgba(15, 23, 42, 0.92)',
       borderColor: '#334155',
       textStyle: { color: '#e2e8f0' },
+      confine: true,
+      axisPointer: {
+        type: 'cross',
+        snap: true,
+        label: {
+          backgroundColor: '#0f172a',
+          borderColor: '#ffffff',
+          borderWidth: 1,
+          color: '#ffffff',
+          fontSize: 11,
+          padding: [4, 8],
+          formatter: (params) =>
+            params.axisDimension === 'y' ? Math.round(params.value) : params.value,
+        },
+        crossStyle: { color: 'rgba(255, 255, 255, 0.85)', width: 1, type: 'dashed' },
+      },
     },
-    grid: { left: 48, right: 24, top: 32, bottom: 72 },
+    grid: { left: 56, right: 24, top: 32, bottom: 72 },
     xAxis: {
       type: 'category',
       data: issues,
       axisLabel: { color: '#64748b', rotate: 45, fontSize: 10, interval: Math.floor(issues.length / 12) },
       axisLine: { lineStyle: { color: '#334155' } },
+      axisPointer: {
+        show: true,
+        snap: true,
+        label: { show: false },
+        lineStyle: { color: 'transparent', width: 0 },
+      },
+      boundaryGap: false,
     },
     yAxis: {
       type: 'value',
       min: 0,
       max: 27,
-      axisLabel: { color: '#64748b' },
-      splitLine: { lineStyle: { color: '#1e293b' } },
+      interval: 1,
+      axisLabel: {
+        color: '#94a3b8',
+        fontSize: 9,
+      },
+      splitLine: {
+        lineStyle: {
+          color: (params) => (params.value % 3 === 0 || params.value === 27 ? '#1e293b' : 'rgba(30, 41, 59, 0.35)'),
+        },
+      },
+      axisPointer: {
+        show: true,
+        snap: false,
+        lineStyle: { color: 'rgba(255, 255, 255, 0.9)', width: 1, type: 'dashed' },
+      },
     },
     dataZoom: [
       { type: 'inside', start: Math.max(0, 100 - (80 / issues.length) * 100) },
@@ -54,7 +90,24 @@ const option = computed(() => {
         type: 'line',
         data: sums,
         smooth: true,
-        symbol: 'none',
+        symbol: 'circle',
+        symbolSize: 4,
+        showSymbol: false,
+        showAllSymbol: false,
+        itemStyle: {
+          color: '#60a5fa',
+          borderColor: '#ffffff',
+          borderWidth: 1,
+        },
+        emphasis: {
+          scale: 1,
+          focus: 'series',
+          itemStyle: {
+            color: '#ffffff',
+            borderColor: '#60a5fa',
+            borderWidth: 1,
+          },
+        },
         lineStyle: { width: 2, color: '#60a5fa' },
         areaStyle: {
           color: {
@@ -68,9 +121,20 @@ const option = computed(() => {
         },
         markLine: {
           silent: true,
-          symbol: 'none',
-          lineStyle: { color: '#f472b6', type: 'dashed' },
-          label: { formatter: `均值 ${avg}`, color: '#f472b6' },
+          symbol: ['none', 'none'],
+          lineStyle: { color: '#f472b6', type: 'dashed', width: 1.5 },
+          label: {
+            show: true,
+            position: 'start',
+            distance: 6,
+            formatter: avg,
+            color: '#ffffff',
+            fontSize: 11,
+            fontWeight: 700,
+            padding: [2, 6],
+            borderRadius: 4,
+            backgroundColor: '#f472b6',
+          },
           data: [{ yAxis: Number(avg) }],
         },
       },
@@ -86,6 +150,6 @@ const option = computed(() => {
 <style scoped>
 .chart {
   width: 100%;
-  height: 300px;
+  height: 380px;
 }
 </style>

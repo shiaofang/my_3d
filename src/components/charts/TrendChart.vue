@@ -86,6 +86,6 @@ const option = computed(() => {
 <style scoped>
 .chart {
   width: 100%;
-  height: 360px;
+  height: 280px;
 }
 </style>
