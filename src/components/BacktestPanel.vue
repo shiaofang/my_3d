@@ -14,9 +14,12 @@ const REC_INLINE_PREVIEW = 3
 import {
   computeAllPositionTransitions,
   formatTransitionPct,
+  enrichTransitionWithPattern,
+  upDownFlagOfDigit,
   sliceDrawsThroughIssue,
   transitionBarWidth,
 } from '../utils/transition.js'
+import TwentySevenBetsPopover from './TwentySevenBetsPopover.vue'
 
 const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
@@ -189,7 +192,11 @@ const transitionModal = ref(null)
 
 function openTransitionModal(row) {
   if (!canShowTransition(row)) return
-  transitionModal.value = row
+  const flags = row.patternFlags?.length === 3 ? row.patternFlags : null
+  transitionModal.value = {
+    ...row,
+    transition: enrichTransitionWithPattern(row.transition, flags),
+  }
 }
 
 function closeTransitionModal() {
@@ -215,26 +222,6 @@ function scheduleCloseRecPopover() {
 
 function cancelCloseRecPopover() {
   clearTimeout(recPopoverHideTimer)
-}
-
-const recPopoverStyle = computed(() => {
-  const pop = recPopover.value
-  if (!pop) return {}
-  const { anchor } = pop
-  const gap = 10
-  return {
-    position: 'fixed',
-    top: `${anchor.top - gap}px`,
-    left: `${anchor.right}px`,
-    transform: 'translate(-100%, -100%)',
-    zIndex: 10000,
-  }
-})
-
-function transitionTopHit(pos) {
-  if (!pos || pos.topDigit == null || !transitionModal.value?.hasNext) return false
-  const next = transitionModal.value?.nextDigits?.[pos.key]
-  return next === pos.topDigit
 }
 
 const statCards = computed(() => {
@@ -354,20 +341,6 @@ const statCards = computed(() => {
               </td>
               <td class="col-rec">
                 <div class="rec-cell">
-                  <div
-                    v-if="row.positionPicks?.length === 3"
-                    class="rec-pos-line"
-                  >
-                    <span
-                      v-for="(posLabel, pi) in ['百', '十', '个']"
-                      :key="posLabel"
-                      class="rec-pos-pick"
-                    >
-                      <span class="rec-pos-name">{{ posLabel }}</span>
-                      <span class="rec-pos-flag">{{ row.patternFlags[pi] }}</span>
-                      <span class="rec-pos-digits">{{ row.positionPicks[pi].join('') }}</span>
-                    </span>
-                  </div>
                   <div class="rec-inline">
                     <span
                       v-for="(rec, ri) in row.recs.slice(0, REC_INLINE_PREVIEW)"
@@ -400,40 +373,17 @@ const statCards = computed(() => {
     </template>
 
     <!-- 推荐号全部匹配悬浮层 -->
-    <Teleport to="body">
-      <div
-        v-if="recPopover"
-        class="rec-popover"
-        role="tooltip"
-        :style="recPopoverStyle"
-        @mouseenter="cancelCloseRecPopover"
-        @mouseleave="scheduleCloseRecPopover"
-      >
-        <p class="rec-popover-title">
-          {{ recPopover.row.recs.length }} 注 · {{ recPopover.row.predPattern }}
-          <span class="rec-popover-hint">
-            百{{ recPopover.row.positionPicks[0]?.join('') }}
-            十{{ recPopover.row.positionPicks[1]?.join('') }}
-            个{{ recPopover.row.positionPicks[2]?.join('') }}
-          </span>
-        </p>
-        <div class="rec-popover-list">
-          <div
-            v-for="(rec, ri) in recPopover.row.recs"
-            :key="ri"
-            class="rec-popover-row"
-          >
-            <span class="rec-group">
-              <span
-                v-for="(d, i) in rec"
-                :key="i"
-                :class="['rd', d === recPopover.row.actual[i] ? 'rd-hit' : '']"
-              >{{ d }}</span>
-            </span>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <TwentySevenBetsPopover
+      v-if="recPopover"
+      :anchor="recPopover.anchor"
+      :pattern="recPopover.row.predPattern"
+      :position-picks="recPopover.row.positionPicks ?? []"
+      :pattern-flags="recPopover.row.patternFlags ?? []"
+      :combos="recPopover.row.recs"
+      :actual="recPopover.row.actual"
+      @mouseenter="cancelCloseRecPopover"
+      @mouseleave="scheduleCloseRecPopover"
+    />
 
     <!-- 转移概率弹窗 -->
     <Teleport to="body">
@@ -456,6 +406,24 @@ const statCards = computed(() => {
             <button type="button" class="trans-close" @click="closeTransitionModal">×</button>
           </div>
 
+          <div
+            v-if="transitionModal.predPattern"
+            class="trans-pattern-banner"
+          >
+            <span class="trans-pattern-label">预测上下形态</span>
+            <span class="trans-pattern-value">{{ transitionModal.predPattern }}</span>
+            <span
+              v-if="transitionModal.patternFlags?.length === 3"
+              class="trans-pattern-flags"
+            >
+              <span
+                v-for="(posLabel, pi) in ['百', '十', '个']"
+                :key="posLabel"
+              >{{ posLabel }}{{ transitionModal.patternFlags[pi] }}</span>
+            </span>
+            <span class="trans-pattern-note">各位 Top1 在对应上/下行内选取</span>
+          </div>
+
           <div class="trans-prev">
             <span class="trans-prev-label">本期开奖</span>
             <span class="mono">{{ transitionModal.issue }}</span>
@@ -467,22 +435,6 @@ const statCards = computed(() => {
                 class="mini-ball cur"
               >{{ d }}</span>
             </span>
-          </div>
-
-          <div class="trans-actual">
-            <span class="trans-prev-label">下期实际</span>
-            <template v-if="transitionModal.hasNext && transitionModal.nextDigits">
-              <span class="mono">{{ transitionModal.nextIssue }}</span>
-              <span class="mono dim">{{ transitionModal.nextDate }}</span>
-              <span class="ball-row">
-                <span
-                  v-for="(d, i) in transitionModal.nextDigits"
-                  :key="i"
-                  class="mini-ball actual"
-                >{{ d }}</span>
-              </span>
-            </template>
-            <span v-else class="trans-pending">暂无下期数据（可查看推测概率）</span>
           </div>
 
           <div class="trans-pos-row">
@@ -498,20 +450,9 @@ const statCards = computed(() => {
                 → 转移样本 {{ pos.sampleSize }} 次
               </span>
               <span
-                v-if="pos.sampleSize > 0"
-                :class="[
-                  'trans-pred-tag',
-                  transitionModal.hasNext
-                    ? (transitionTopHit(pos) ? 'hit' : 'miss')
-                    : 'pending',
-                ]"
-              >
-                推测 Top1：<b>{{ pos.topDigit }}</b>
-                <template v-if="transitionModal.hasNext">
-                  {{ transitionTopHit(pos) ? '✓ 命中' : '✗ 未中' }}
-                </template>
-              </span>
-              <span v-else class="trans-pred-tag na">无历史样本</span>
+                v-if="pos.sampleSize === 0"
+                class="trans-pred-tag na"
+              >无历史样本</span>
             </div>
 
             <div v-if="pos.sampleSize > 0" class="trans-grid">
@@ -520,8 +461,12 @@ const statCards = computed(() => {
                 :key="d"
                 class="trans-cell"
                 :class="{
-                  'is-actual': transitionModal.hasNext && d === transitionModal.nextDigits?.[pos.key],
                   'is-top': d === pos.topDigit,
+                  'in-pattern-band': pos.patternFlag
+                    ? upDownFlagOfDigit(d) === pos.patternFlag
+                    : true,
+                  'out-pattern-band': pos.patternFlag
+                    && upDownFlagOfDigit(d) !== pos.patternFlag,
                 }"
               >
                 <span class="trans-digit">{{ d }}</span>
@@ -851,8 +796,44 @@ const statCards = computed(() => {
 }
 .trans-close:hover { color: #f8fafc; background: rgba(248, 113, 113, 0.2); }
 
-.trans-prev,
-.trans-actual {
+.trans-pattern-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.22);
+  font-size: 12px;
+}
+
+.trans-pattern-label {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.trans-pattern-value {
+  font-size: 16px;
+  font-weight: 800;
+  color: #fbbf24;
+  letter-spacing: 1px;
+}
+
+.trans-pattern-flags {
+  display: inline-flex;
+  gap: 8px;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.trans-pattern-note {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.trans-prev {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -960,6 +941,14 @@ const statCards = computed(() => {
   border-color: rgba(251, 191, 36, 0.5);
 }
 
+.trans-cell.out-pattern-band {
+  opacity: 0.38;
+}
+
+.trans-cell.in-pattern-band:not(.is-top) {
+  border-color: rgba(251, 191, 36, 0.15);
+}
+
 .trans-digit {
   font-family: monospace;
   font-size: 13px;
@@ -1051,42 +1040,6 @@ const statCards = computed(() => {
   gap: 6px;
 }
 
-.rec-pos-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 6px 10px;
-  font-size: 11px;
-  color: #94a3b8;
-}
-
-.rec-pos-pick {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: rgba(251, 191, 36, 0.08);
-}
-
-.rec-pos-name {
-  font-weight: 700;
-  color: #fbbf24;
-}
-
-.rec-pos-flag {
-  font-size: 10px;
-  color: #64748b;
-}
-
-.rec-pos-digits {
-  font-family: var(--mono, monospace);
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: #e2e8f0;
-}
-
 .rec-inline {
   display: flex;
   flex-wrap: nowrap;
@@ -1110,56 +1063,6 @@ const statCards = computed(() => {
 .rec-more:hover {
   background: rgba(251, 191, 36, 0.12);
   color: #fde68a;
-}
-
-.rec-popover {
-  position: fixed;
-  width: min(880px, calc(100vw - 32px));
-  overflow: visible;
-  box-sizing: border-box;
-  padding: 16px 28px;
-  border-radius: 12px;
-  border: 1px solid #475569;
-  background: rgba(15, 23, 42, 0.98);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
-  text-align: left;
-  pointer-events: auto;
-}
-
-.rec-popover::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 100%;
-  height: 12px;
-}
-
-.rec-popover-title {
-  margin: 0 0 12px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #e2e8f0;
-}
-
-.rec-popover-hint {
-  font-weight: 400;
-  color: #64748b;
-  font-size: 12px;
-}
-
-.rec-popover-list {
-  display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
-  gap: 8px 12px;
-  padding: 0 4px;
-  box-sizing: border-box;
-}
-
-.rec-popover-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .rec-group {

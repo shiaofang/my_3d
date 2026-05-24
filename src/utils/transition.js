@@ -12,6 +12,43 @@ export function formatTransitionPct(value) {
   return Number(value).toFixed(2)
 }
 
+/** 0–4=上，5–9=下 */
+export function upDownFlagOfDigit(digit) {
+  return digit >= 5 ? '下' : '上'
+}
+
+/** 在预测形态对应行（上=0–4 / 下=5–9）内取综合概率最高的号码 */
+export function topDigitInBand(percents, isUp) {
+  const range = isUp ? [0, 1, 2, 3, 4] : [5, 6, 7, 8, 9]
+  let best = range[0]
+  let bestP = -1
+  for (const d of range) {
+    if (percents[d] > bestP + 1e-9) {
+      bestP = percents[d]
+      best = d
+    }
+  }
+  return best
+}
+
+/** 按预测上下形态约束各位 Top1，避免与「上上下」等形态预测不一致 */
+export function enrichTransitionWithPattern(transition, patternFlags) {
+  if (!transition?.length || patternFlags?.length !== 3) return transition
+  return transition.map((pos, pi) => {
+    const patternFlag = patternFlags[pi]
+    const isUp = patternFlag === '上'
+    const patternTopDigit =
+      pos.sampleSize > 0 ? topDigitInBand(pos.percents, isUp) : null
+    return {
+      ...pos,
+      patternFlag,
+      patternTopDigit,
+      rawTopDigit: pos.topDigit,
+      topDigit: patternTopDigit ?? pos.topDigit,
+    }
+  })
+}
+
 /** 概率条宽度：按该位置最高概率等比缩放（与图表纵轴一致） */
 export function transitionBarWidth(pct, percents) {
   const max = Math.max(...percents, THEOR_PCT, 0.01)

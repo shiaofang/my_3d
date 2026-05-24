@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { BarChart } from 'echarts/charts'
@@ -7,6 +7,7 @@ import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { getNumberType } from '../utils/parser.js'
 import { RECOMMENDATION_COUNT } from '../utils/predict.js'
+import TwentySevenBetsPopover from './TwentySevenBetsPopover.vue'
 
 use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
 
@@ -23,6 +24,12 @@ const PRIMARY_STYLE = {
 }
 
 const showGroupModal = ref(false)
+const showBetsPopover = ref(false)
+const popoverAnchor = ref(null)
+const moreBtnRef = ref(null)
+const betsPopoverRef = ref(null)
+
+const twentySevenBets = computed(() => props.prediction?.twentySevenBets ?? null)
 
 const primary = computed(() => props.prediction?.recommendations?.[0] ?? null)
 
@@ -114,38 +121,67 @@ function digitColor(d) {
 function openGroupModal() {
   if (predictionGroups.value.length) showGroupModal.value = true
 }
+
+function toggleBetsPopover(e) {
+  e.stopPropagation()
+  if (showBetsPopover.value) {
+    closeBetsPopover()
+    return
+  }
+  if (!twentySevenBets.value?.combos?.length || !moreBtnRef.value) return
+  popoverAnchor.value = moreBtnRef.value.getBoundingClientRect()
+  showBetsPopover.value = true
+}
+
+function closeBetsPopover() {
+  showBetsPopover.value = false
+  popoverAnchor.value = null
+}
+
+function onDocumentClick(e) {
+  if (!showBetsPopover.value) return
+  const target = e.target
+  if (moreBtnRef.value?.contains(target)) return
+  if (betsPopoverRef.value?.rootEl?.contains(target)) return
+  closeBetsPopover()
+}
+
+onMounted(() => {
+  document.addEventListener('click', onDocumentClick)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', onDocumentClick)
+})
 </script>
 
 <template>
-  <div v-if="primary && compact" class="pred-inline">
+  <div v-if="twentySevenBets && compact" class="pred-inline">
     <div class="inline-head">
       <span class="label">下期推荐号码</span>
-      <span
-        v-if="recNumberType"
-        class="inline-type"
-        :class="recNumberType === '组三' ? 'type-zu3' : 'type-zu6'"
-      >{{ recNumberType }}</span>
     </div>
-    <div class="inline-recs">
-      <div
-        v-for="rec in topRecommendations"
-        :key="rec.rank"
-        class="inline-combo"
-        :title="`形态 ${rec.pattern} · 奇偶 ${rec.oddEvenRatio} · 组六 · 评分 ${rec.score}`"
-      >
-        <span class="inline-idx">{{ rec.rank }}</span>
-        <span class="inline-nums">
-          <span v-for="(n, i) in rec.digits" :key="i" class="inline-ball">{{ n }}</span>
-        </span>
-      </div>
+    <div class="inline-pattern-row">
+      <span class="inline-pattern">{{ twentySevenBets.pattern }}</span>
       <button
-        v-if="predictionGroups.length > RECOMMENDATION_COUNT"
+        ref="moreBtnRef"
         type="button"
-        class="btn-pred-group"
-        title="查看更多预测号码组"
-        @click="openGroupModal"
-      >更多</button>
+        class="rec-more"
+        :class="{ active: showBetsPopover }"
+        aria-label="查看全部 27 注"
+        :aria-expanded="showBetsPopover"
+        @click="toggleBetsPopover"
+      >…</button>
     </div>
+    <TwentySevenBetsPopover
+      v-if="showBetsPopover && popoverAnchor"
+      ref="betsPopoverRef"
+      placement="below"
+      :anchor="popoverAnchor"
+      :pattern="twentySevenBets.pattern"
+      :position-picks="twentySevenBets.positionPicks"
+      :pattern-flags="twentySevenBets.patternFlags"
+      :combos="twentySevenBets.combos"
+    />
   </div>
 
   <div v-else-if="primary" class="pred-wrap">
@@ -306,6 +342,39 @@ function openGroupModal() {
 .inline-type.type-zu6 {
   color: #34d399;
   background: rgba(52, 211, 153, 0.12);
+}
+
+.inline-pattern-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inline-pattern {
+  font-size: 15px;
+  font-weight: 800;
+  color: #fbbf24;
+  letter-spacing: 2px;
+}
+
+.rec-more {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fbbf24;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.rec-more:hover,
+.rec-more.active {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fde68a;
 }
 
 .inline-combo {
