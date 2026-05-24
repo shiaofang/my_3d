@@ -1,3 +1,8 @@
+/** Dev/preview: Vite middleware → `data/lottery-cache.json` (+ `public/lottery-cache.json`). */
+const FILE_CACHE_URL = '/api/local-lottery'
+/** Static build fallback when the middleware is unavailable. */
+const PUBLIC_CACHE_URL = '/lottery-cache.json'
+
 const DB_NAME = 'fc3d-lottery'
 const DB_VERSION = 1
 const STORE_NAME = 'draws'
@@ -30,6 +35,44 @@ function runTransaction(mode, fn) {
   )
 }
 
+function buildPayload(records) {
+  return {
+    records,
+    updatedAt: Date.now(),
+    count: records.length,
+    latestIssue: records[records.length - 1]?.issue ?? null,
+    oldestIssue: records[0]?.issue ?? null,
+  }
+}
+
+/** @returns {Promise<{ records: object[], updatedAt: number, count: number } | null>} */
+export async function readFileCache() {
+  for (const url of [FILE_CACHE_URL, PUBLIC_CACHE_URL]) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) continue
+      const data = await res.json()
+      if (data?.records?.length) return data
+    } catch {
+      // try next source
+    }
+  }
+  return null
+}
+
+/** @param {object[]} records raw API records, chronological (oldest → newest) */
+export async function writeFileCache(records) {
+  try {
+    await fetch(FILE_CACHE_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildPayload(records)),
+    })
+  } catch {
+    // Not available in static production build
+  }
+}
+
 /** @returns {Promise<{ records: object[], updatedAt: number, count: number } | null>} */
 export async function readCache() {
   try {
@@ -45,15 +88,10 @@ export async function readCache() {
 
 /** @param {object[]} records raw API records, chronological (oldest → newest) */
 export async function writeCache(records) {
+  const payload = buildPayload(records)
+  writeFileCache(records)
   try {
     await runTransaction('readwrite', (store, resolve, reject) => {
-      const payload = {
-        records,
-        updatedAt: Date.now(),
-        count: records.length,
-        latestIssue: records[records.length - 1]?.issue ?? null,
-        oldestIssue: records[0]?.issue ?? null,
-      }
       const req = store.put(payload, CACHE_KEY)
       req.onsuccess = () => resolve()
       req.onerror = () => reject(req.error)

@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Auto-generated lottery snapshots (optional: remove these lines to version-control backups)
+data/lottery-cache.json
+public/lottery-cache.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -11,6 +11,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { avgMarkLine } from '../../utils/chartAvgMarkLine.js'
+import { cappedOmiBoost } from '../../utils/predict.js'
 
 use([BarChart, LineChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, CanvasRenderer])
 
@@ -62,12 +63,10 @@ const omissions = computed(() => {
   return gaps
 })
 
-const maxOmission = computed(() => Math.max(...omissions.value, 1))
-
 /**
  * Predicted probability for next draw:
  *   base_i      = max(ε, 2×avg − count_i)            // inverse frequency cooling
- *   omiBoost_i  = 1 + α × omission_i / maxOmission   // ties broken by gap
+ *   omiBoost_i  = cappedOmiBoost(omission_i)         // 遗漏加成有封顶
  *   raw_i       = base_i × omiBoost_i
  *   predicted_pct_i = raw_i / Σraw × 100
  */
@@ -76,13 +75,10 @@ const predictedPcts = computed(() => {
   const total = totalDraws.value
   const avg = total / 8
   const EPS = 0.05
-  const OMI_WEIGHT = 0.6
   const omi = omissions.value
-  const maxOmi = maxOmission.value
   const raws = stats.map((s, i) => {
     const base = Math.max(EPS, 2 * avg - s.count)
-    const omiBoost = 1 + OMI_WEIGHT * (omi[i] / maxOmi)
-    return base * omiBoost
+    return base * cappedOmiBoost(omi[i], 8)
   })
   const sumRaw = raws.reduce((a, b) => a + b, 0)
   return raws.map((r) => (sumRaw > 0 ? (r / sumRaw) * 100 : 12.5))

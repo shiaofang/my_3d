@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { fetchLotteryList, fetchLatestBatch, fetchOlderRecords, PAGE_SIZE } from '../api/lottery'
-import { readCache, writeCache, mergeRecords } from '../utils/lotteryCache'
+import { readCache, readFileCache, writeCache, mergeRecords } from '../utils/lotteryCache'
 import { parseWinnum, calcSum, calcSpan, getNumberType } from '../utils/parser'
 import { buildPrediction, PATTERN_LABELS, OE_LABELS } from '../utils/predict.js'
 import { buildCombinationFrequency } from '../utils/combinationFrequency.js'
@@ -94,8 +94,11 @@ export const useLotteryStore = defineStore('lottery', {
 
     async loadData(limit = this.limit, { refresh = false } = {}) {
       this.error = null
-      const cached = await readCache()
-      let rawRecords = cached?.records ?? []
+      const [idbCache, fileCache] = await Promise.all([readCache(), readFileCache()])
+      let rawRecords = mergeRecords(
+        idbCache?.records ?? [],
+        fileCache?.records ?? [],
+      )
 
       if (rawRecords.length) {
         this.setFromRaw(rawRecords, limit)

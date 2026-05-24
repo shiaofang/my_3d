@@ -115,7 +115,11 @@ onMounted(() => store.loadData())
 
     <div v-if="error" class="error-banner">{{ error }}</div>
 
-    <main v-if="!loading && chronDraws.length" class="dashboard">
+    <main
+      v-if="!loading && chronDraws.length"
+      class="dashboard"
+      :class="{ 'dashboard-wide': activeTab === 'backtest' }"
+    >
       <!-- 开奖记录 -->
       <div v-show="activeTab === 'draws'" class="tab-panel" role="tabpanel">
         <header class="panel-head">
@@ -393,6 +397,10 @@ onMounted(() => store.loadData())
   padding: 12px 32px 48px;
   max-width: 1400px;
   margin: 0 auto;
+}
+
+.dashboard-wide {
+  max-width: min(1720px, calc(100vw - 40px));
 }
 
 .tab-bar {

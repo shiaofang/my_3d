@@ -6,6 +6,7 @@ import { BarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { getNumberType } from '../utils/parser.js'
+import { RECOMMENDATION_COUNT } from '../utils/predict.js'
 
 use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
 
@@ -24,6 +25,10 @@ const PRIMARY_STYLE = {
 const showGroupModal = ref(false)
 
 const primary = computed(() => props.prediction?.recommendations?.[0] ?? null)
+
+const topRecommendations = computed(() =>
+  props.prediction?.recommendations?.slice(0, RECOMMENDATION_COUNT) ?? [],
+)
 
 const predictionGroups = computed(() => props.prediction?.predictionGroups ?? [])
 
@@ -93,6 +98,15 @@ const recNumberType = computed(() => {
   return t === '豹子' ? null : t
 })
 
+/** 概率最高的上下形态 */
+const topPattern = computed(() => {
+  const p = props.prediction
+  if (!p) return { label: '', prob: 0 }
+  const t = p.topPatterns?.[0]
+  if (t) return { label: t.label, prob: t.prob }
+  return { label: p.topPattern ?? '', prob: p.topPatternProb ?? 0 }
+})
+
 function digitColor(d) {
   return d <= 4 ? '#fbbf24' : '#60a5fa'
 }
@@ -112,21 +126,25 @@ function openGroupModal() {
         :class="recNumberType === '组三' ? 'type-zu3' : 'type-zu6'"
       >{{ recNumberType }}</span>
     </div>
-    <div
-      class="inline-combo"
-      :title="`${PRIMARY_STYLE.tag} · ${recNumberType} · 上下${primary.pattern} · 奇偶${primary.oddEvenRatio}`"
-    >
-      <span class="inline-tag" :style="{ color: PRIMARY_STYLE.accent }">{{ PRIMARY_STYLE.tag }}</span>
-      <span class="inline-nums">
-        <span v-for="(n, i) in primary.digits" :key="i" class="inline-ball">{{ n }}</span>
-      </span>
+    <div class="inline-recs">
+      <div
+        v-for="rec in topRecommendations"
+        :key="rec.rank"
+        class="inline-combo"
+        :title="`形态 ${rec.pattern} · 奇偶 ${rec.oddEvenRatio} · 组六 · 评分 ${rec.score}`"
+      >
+        <span class="inline-idx">{{ rec.rank }}</span>
+        <span class="inline-nums">
+          <span v-for="(n, i) in rec.digits" :key="i" class="inline-ball">{{ n }}</span>
+        </span>
+      </div>
       <button
-        v-if="predictionGroups.length"
+        v-if="predictionGroups.length > RECOMMENDATION_COUNT"
         type="button"
         class="btn-pred-group"
-        title="查看概率最高的预测号码组"
+        title="查看更多预测号码组"
         @click="openGroupModal"
-      >预测组</button>
+      >更多</button>
     </div>
   </div>
 
@@ -135,75 +153,69 @@ function openGroupModal() {
       <div class="title-row">
         <span class="pred-title">⭐ 下期推荐号码</span>
         <span class="pred-basis">
-          形态·奇偶比·和值·组三/组六 + 组合次数中间段 · 近 {{ prediction.basePeriods }} 期
+          组六 · 上下形态 + 奇偶比 + 和值走势 · {{ topRecommendations.length }} 组推荐号 · 近 {{ prediction.basePeriods }} 期
         </span>
       </div>
       <div class="pattern-banner">
         <span class="banner-label">上下形态</span>
-        <span class="banner-pattern">{{ prediction.topPattern }}</span>
-        <span class="banner-prob">{{ prediction.topPatternProb }}%</span>
+        <span class="banner-pattern">{{ topPattern.label }}</span>
+        <span class="banner-prob">{{ topPattern.prob }}%</span>
         <span class="banner-divider" />
         <span class="banner-label">最优奇偶比</span>
         <span class="banner-pattern oe">{{ prediction.topOddEven }}</span>
         <span class="banner-prob oe">{{ prediction.topOddEvenProb }}%</span>
         <span class="banner-divider" />
-        <span class="banner-label">近期和值</span>
-        <span class="banner-sum">{{ prediction.recentSumAvg }}</span>
+        <span class="banner-label">和值走势</span>
+        <span class="banner-sum">{{ prediction.sumTarget }}</span>
+        <span class="banner-prob sum-band">{{ prediction.sumBand }}</span>
+        <span v-if="prediction.sumTrendLabel" class="banner-trend">{{ prediction.sumTrendLabel }}</span>
         <span class="banner-divider" />
-        <span class="banner-label">下期倾向</span>
-        <span class="banner-pattern type">{{ prediction.topType }}</span>
-        <span class="banner-prob type">{{ prediction.topTypeProb }}%</span>
+        <span class="banner-label">号码类型</span>
+        <span class="banner-pattern type">组六</span>
+        <span class="banner-prob type">仅推荐组六</span>
       </div>
       <p v-if="prediction.typeSignal" class="type-signal">{{ prediction.typeSignal }}</p>
     </div>
 
-    <div class="combos">
+    <div class="combos rec-grid">
       <div
-        class="combo-card"
-        :style="{ '--accent': PRIMARY_STYLE.accent, '--glow': PRIMARY_STYLE.glow }"
+        v-for="rec in topRecommendations"
+        :key="rec.rank"
+        class="combo-card rec-card"
+        :style="{ '--accent': rec.rank === 1 ? PRIMARY_STYLE.accent : '#94a3b8', '--glow': rec.rank === 1 ? PRIMARY_STYLE.glow : 'transparent' }"
       >
         <div class="combo-head">
-          <span class="rank-icon">{{ PRIMARY_STYLE.icon }}</span>
+          <span class="rank-icon">{{ rec.rank === 1 ? PRIMARY_STYLE.icon : `#${rec.rank}` }}</span>
           <div class="rank-info">
-            <span class="rank-tag">{{ PRIMARY_STYLE.tag }}</span>
-            <span class="rank-pattern">综合评分 {{ primary.score }}</span>
+            <span class="rank-tag">{{ rec.rank === 1 ? PRIMARY_STYLE.tag : `推荐 ${rec.rank}` }}</span>
+            <span class="rank-pattern">综合评分 {{ rec.score }}</span>
           </div>
         </div>
 
-        <div class="balls-row">
-          <div
-            v-for="(digit, i) in primary.digits"
+        <div class="balls-row compact-balls">
+          <span
+            v-for="(digit, i) in rec.digits"
             :key="i"
-            class="ball-slot"
-          >
-            <span class="pos-tag">{{ ['百位','十位','个位'][i] }}</span>
-            <span
-              class="big-ball"
-              :style="{ '--ball-color': digitColor(digit) }"
-            >{{ digit }}</span>
-            <span class="pos-flag" :class="primary.flags[i] === 0 ? 'up' : 'down'">
-              {{ primary.flags[i] === 0 ? '上' : '下' }}
-            </span>
-          </div>
+            class="big-ball sm"
+            :style="{ '--ball-color': digitColor(digit) }"
+          >{{ digit }}</span>
         </div>
 
         <div class="meta-row">
           <span class="meta-pill">
             <span class="dot dot-gold" />
-            形态 {{ primary.pattern }}
+            {{ rec.pattern }}
           </span>
           <span class="meta-pill oe-pill">
             <span class="dot dot-cyan" />
-            奇偶比 <b>{{ primary.oddEvenRatio }}</b>
-            <span class="oe-prob">{{ primary.oddEvenProb }}%</span>
+            奇偶 <b>{{ rec.oddEvenRatio }}</b>
           </span>
-          <span
-            v-if="primary.numberType"
-            class="meta-pill type-pill"
-            :class="primary.numberType === '组三' ? 'type-zu3' : 'type-zu6'"
-          >
-            {{ primary.numberType }}
-            <span class="type-prob">{{ primary.numberTypeProb }}%</span>
+          <span class="meta-pill sum-pill">
+            <span class="dot dot-blue" />
+            和值 <b>{{ rec.sum }}</b>
+            <span class="sum-dev" :class="Math.abs(rec.sumDev) <= 1 ? 'ok' : ''">
+              {{ rec.sumDev > 0 ? '+' : '' }}{{ rec.sumDev }}
+            </span>
           </span>
         </div>
       </div>
@@ -214,7 +226,7 @@ function openGroupModal() {
       <span class="leg"><span class="ldot down" /> 下 (5–9)</span>
       <span class="leg-spacer" />
       <span class="leg-note">
-        首选优先从历史开奖中选取，组合出现次数在 3D 图次数 1/3～2/3 区间内
+        仅组六 · 须匹配预测上下形态与奇偶比 · 历史出现过的号码优先展示
       </span>
     </div>
 
@@ -232,7 +244,7 @@ function openGroupModal() {
           <div>
             <h3 id="group-dialog-title" class="group-dialog-title">预测组</h3>
             <p class="group-dialog-sub">
-              形态 {{ prediction.topPattern }} · 奇偶 {{ prediction.topOddEven }}
+              形态 {{ topPattern.label }} · 奇偶 {{ prediction.topOddEven }}
               · 共 {{ predictionGroups.length }} 组（相对概率）
             </p>
           </div>
@@ -532,9 +544,13 @@ function openGroupModal() {
 .banner-label { font-size: 11px; color: #94a3b8; letter-spacing: 0.5px; }
 .banner-pattern { font-size: 16px; font-weight: 800; color: #fbbf24; letter-spacing: 1px; }
 .banner-pattern.oe { color: #22d3ee; letter-spacing: 0.5px; }
+.banner-pattern.oe-seq { color: #2dd4bf; letter-spacing: 1px; }
 .banner-pattern.type { color: #34d399; letter-spacing: 0.5px; }
 .banner-prob { font-size: 13px; font-weight: 700; color: #fbbf24; padding: 1px 8px; border-radius: 8px; background: rgba(251, 191, 36, 0.15); }
+.banner-alt { font-size: 14px; font-weight: 700; color: #94a3b8; margin-left: 2px; }
+.banner-prob.alt { color: #94a3b8; background: rgba(148, 163, 184, 0.12); }
 .banner-prob.oe { color: #22d3ee; background: rgba(34, 211, 238, 0.14); }
+.banner-prob.oe-seq { color: #2dd4bf; background: rgba(45, 212, 191, 0.14); }
 .banner-prob.type { color: #34d399; background: rgba(52, 211, 153, 0.14); }
 
 .type-signal {
@@ -545,11 +561,49 @@ function openGroupModal() {
 }
 .banner-divider { width: 1px; height: 16px; background: rgba(255, 255, 255, 0.12); margin: 0 4px; }
 .banner-sum { font-size: 16px; font-weight: 800; color: #60a5fa; }
+.banner-prob.sum-band { color: #60a5fa; background: rgba(96, 165, 250, 0.14); }
+.banner-trend { font-size: 11px; font-weight: 600; color: #94a3b8; padding: 2px 8px; border-radius: 8px; background: rgba(148, 163, 184, 0.12); }
 
 .combos {
   display: grid;
   grid-template-columns: 1fr;
   max-width: 420px;
+}
+
+.combos.rec-grid {
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  max-width: 100%;
+}
+
+.combos.rec-grid .rec-card { padding: 10px 12px 8px; }
+.combos.rec-grid .rank-icon { font-size: 18px; }
+.combos.rec-grid .combo-head { margin-bottom: 8px; }
+
+.compact-balls {
+  justify-content: center;
+  gap: 8px;
+  padding: 4px 0 8px;
+}
+
+.big-ball.sm {
+  width: 36px;
+  height: 36px;
+  font-size: 17px;
+}
+
+.inline-recs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-idx {
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  margin-right: 2px;
 }
 
 .combo-card {
@@ -646,8 +700,15 @@ function openGroupModal() {
 .dot-gold { background: #fbbf24; }
 .dot-orange { background: #fb923c; }
 .dot-cyan { background: #22d3ee; }
+.dot-teal { background: #2dd4bf; }
+.dot-blue { background: #60a5fa; }
+
+.sum-pill b { color: #60a5fa; margin: 0 2px; font-weight: 800; }
+.sum-dev { font-size: 10px; margin-left: 4px; color: #64748b; }
+.sum-dev.ok { color: #4ade80; }
 
 .oe-pill b { color: #22d3ee; margin: 0 2px; font-weight: 800; }
+.oe-seq-pill b { color: #2dd4bf; margin: 0 2px; font-weight: 800; letter-spacing: 0.5px; }
 .oe-prob { color: #22d3ee; opacity: 0.75; font-size: 10px; margin-left: 2px; }
 
 .type-pill { font-weight: 700; }
@@ -679,7 +740,8 @@ function openGroupModal() {
 
 @media (max-width: 900px) {
   .pred-wrap { margin: 0 16px 8px; padding: 14px 14px 12px; }
-  .combos { grid-template-columns: 1fr; }
+  .combos,
+  .combos.rec-grid { grid-template-columns: 1fr; }
   .legend-row { flex-direction: column; align-items: flex-start; gap: 6px; }
   .pred-inline { width: auto; }
 }

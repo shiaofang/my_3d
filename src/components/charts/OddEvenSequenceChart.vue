@@ -11,7 +11,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { avgMarkLine } from '../../utils/chartAvgMarkLine.js'
-import { cappedOmiBoost } from '../../utils/predict.js'
+import { cappedOmiBoost, OE_SEQUENCE_LABELS, oeSequenceIdxOf } from '../../utils/predict.js'
 
 use([BarChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, CanvasRenderer])
 
@@ -19,46 +19,42 @@ const props = defineProps({
   draws: { type: Array, default: () => [] },
 })
 
-const LABELS = ['3:0', '2:1', '1:2', '0:3']
-const DESCRIPTIONS = ['全奇', '两奇一偶', '一奇两偶', '全偶']
-const BASE_COLORS = ['#fbbf24', '#fb923c', '#60a5fa', '#22d3ee']
+const BASE_COLORS = [
+  '#22d3ee', '#06b6d4', '#2dd4bf', '#14b8a6',
+  '#38bdf8', '#0ea5e9', '#60a5fa', '#818cf8',
+]
 
 const DAYS_OPTIONS = [8, 16, 24, 32, 40, 48]
 const selectedDays = ref(16)
-
-const THEOR_PCT = 100 / 4 // 25%
-
-function categoryOf(draw) {
-  const odds = draw.digits.filter((d) => d % 2 === 1).length
-  return 3 - odds // 3奇 → 0
-}
+const THEOR_PCT = 100 / 8
 
 const filteredStats = computed(() => {
-  if (!props.draws.length) return LABELS.map((label, i) => ({ label, desc: DESCRIPTIONS[i], count: 0 }))
+  if (!props.draws.length) {
+    return OE_SEQUENCE_LABELS.map((label) => ({ label, count: 0 }))
+  }
 
   const cutoff = new Date()
   cutoff.setDate(cutoff.getDate() - selectedDays.value)
   cutoff.setHours(0, 0, 0, 0)
 
-  const counts = new Array(4).fill(0)
+  const counts = new Array(8).fill(0)
   for (const draw of props.draws) {
     const d = new Date(draw.kjdate?.replace(/-/g, '/') ?? '')
     if (isNaN(d.getTime()) || d < cutoff) continue
-    counts[categoryOf(draw)]++
+    counts[oeSequenceIdxOf(draw)]++
   }
-  return LABELS.map((label, i) => ({ label, desc: DESCRIPTIONS[i], count: counts[i] }))
+  return OE_SEQUENCE_LABELS.map((label, i) => ({ label, count: counts[i] }))
 })
 
 const totalDraws = computed(() => filteredStats.value.reduce((s, d) => s + d.count, 0))
 
-/** Omission from full loaded history (independent of window). */
 const omissions = computed(() => {
-  const gaps = new Array(4).fill(0)
+  const gaps = new Array(8).fill(0)
   if (!props.draws.length) return gaps
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 8; i++) {
     let gap = 0
     for (let j = props.draws.length - 1; j >= 0; j--) {
-      if (categoryOf(props.draws[j]) === i) break
+      if (oeSequenceIdxOf(props.draws[j]) === i) break
       gap++
     }
     gaps[i] = gap
@@ -69,12 +65,12 @@ const omissions = computed(() => {
 const predictedPcts = computed(() => {
   const stats = filteredStats.value
   const total = totalDraws.value
-  const avg = total / 4
+  const avg = total / 8
   const EPS = 0.05
   const omi = omissions.value
   const raws = stats.map((s, i) => {
     const base = Math.max(EPS, 2 * avg - s.count)
-    return base * cappedOmiBoost(omi[i], 4)
+    return base * cappedOmiBoost(omi[i], 8)
   })
   const sumRaw = raws.reduce((a, b) => a + b, 0)
   return raws.map((r) => (sumRaw > 0 ? (r / sumRaw) * 100 : THEOR_PCT))
@@ -119,29 +115,28 @@ const option = computed(() => {
         const gap = omissions.value[i]
         const gapTxt = gap === 0 ? '上期刚出现' : `${gap} 期未出`
         return (
-          `<b>${stats[i].label}</b> · ${stats[i].desc}<br/>` +
+          `<b>${stats[i].label}</b> · 百→十→个<br/>` +
           `历史出现 <b style="color:${BASE_COLORS[i]}">${cnt}</b> 次　实际占比 ${actualPct}%<br/>` +
           `当前遗漏 <b style="color:#fb923c">${gapTxt}</b><br/>` +
           `预测概率 <b style="color:${pcts[i] < THEOR_PCT - 2 ? '#f87171' : '#4ade80'}">${pred}%</b>　${trend} ${sign}${diff}%`
         )
       },
     },
-    grid: { top: 56, right: 24, bottom: 56, left: 56, containLabel: true },
+    grid: { top: 56, right: 24, bottom: 64, left: 56, containLabel: true },
     xAxis: {
       type: 'category',
       data: stats.map((d) => d.label),
       axisLabel: {
         interval: 0,
-        fontSize: 13,
+        align: 'center',
         lineHeight: 18,
-        formatter(value, idx) {
+        formatter(_value, idx) {
           const d = stats[idx]
-          return `{name|${d.label}}\n{desc|${d.desc}}\n{cnt|（${d.count}次）}`
+          return `{name|${d.label}}\n{cnt|（${d.count}次）}`
         },
         rich: {
-          name: { color: '#94a3b8', fontSize: 14, fontWeight: 'bold', lineHeight: 20 },
-          desc: { color: '#94a3b8', fontSize: 11, lineHeight: 15 },
-          cnt:  { color: '#64748b', fontSize: 11, lineHeight: 15 },
+          name: { color: '#94a3b8', fontSize: 13, fontWeight: 'bold', lineHeight: 20, align: 'center' },
+          cnt:  { color: '#64748b', fontSize: 11, lineHeight: 15, align: 'center' },
         },
       },
       axisLine: { lineStyle: { color: '#334155' } },
@@ -154,7 +149,7 @@ const option = computed(() => {
       axisLabel: { color: '#64748b', fontSize: 11, formatter: '{value}%' },
       splitLine: { lineStyle: { color: '#1e293b', type: 'dashed' } },
       axisLine: { show: false },
-      max: (v) => Math.max(THEOR_PCT * 1.6, Math.ceil(v.max * 1.3)),
+      max: (v) => Math.max(15, Math.ceil(v.max * 1.35)),
     },
     series: [
       {
@@ -164,22 +159,22 @@ const option = computed(() => {
           const p = pcts[i]
           const excess = p - THEOR_PCT
           let color = BASE_COLORS[i]
-          if (excess < -3) {
-            color = blendHex(BASE_COLORS[i], '#ef4444', Math.min(0.55, Math.abs(excess) * 0.035))
-          } else if (excess > 3) {
-            color = blendHex(BASE_COLORS[i], '#4ade80', Math.min(0.5, excess * 0.03))
+          if (excess < -2) {
+            color = blendHex(BASE_COLORS[i], '#ef4444', Math.min(0.55, Math.abs(excess) * 0.05))
+          } else if (excess > 2) {
+            color = blendHex(BASE_COLORS[i], '#4ade80', Math.min(0.5, excess * 0.04))
           }
           return {
             value: Number(p.toFixed(2)),
             itemStyle: {
               color,
-              borderRadius: [8, 8, 0, 0],
-              shadowBlur: excess > 0 ? 16 : 8,
-              shadowColor: excess > 0 ? '#4ade8066' : BASE_COLORS[i] + '66',
+              borderRadius: [6, 6, 0, 0],
+              shadowBlur: excess > 0 ? 14 : 6,
+              shadowColor: excess > 0 ? '#4ade8066' : BASE_COLORS[i] + '55',
             },
           }
         }),
-        barMaxWidth: 96,
+        barMaxWidth: 56,
         label: {
           show: true,
           position: 'top',
@@ -190,7 +185,7 @@ const option = computed(() => {
             return `{pct|${p.value}%}\n{gap|遗漏 ${gap}}`
           },
           rich: {
-            pct: { color: '#fbbf24', fontSize: 14, fontWeight: 'bold', lineHeight: 20 },
+            pct: { color: '#22d3ee', fontSize: 13, fontWeight: 'bold', lineHeight: 18 },
             gap: { color: '#fb923c', fontSize: 11, fontWeight: 'bold', lineHeight: 16 },
           },
         },
@@ -214,7 +209,7 @@ const option = computed(() => {
         近 {{ d }} 天
       </button>
       <span class="period-count">
-        共 <b>{{ totalDraws }}</b> 期 &nbsp;·&nbsp; 理论每种 25%
+        共 <b>{{ totalDraws }}</b> 期 &nbsp;·&nbsp; 理论每种 12.5%
       </span>
     </div>
 
@@ -244,9 +239,9 @@ const option = computed(() => {
   transition: all 0.18s;
   white-space: nowrap;
 }
-.day-btn:hover { border-color: #fbbf24; color: #fbbf24; }
+.day-btn:hover { border-color: #22d3ee; color: #22d3ee; }
 .day-btn.active {
-  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  background: linear-gradient(135deg, #22d3ee, #06b6d4);
   border-color: transparent;
   color: #0f172a;
   font-weight: 700;

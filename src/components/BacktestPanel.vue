@@ -1,6 +1,16 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { buildPrediction, patternIdxOf, oeCatOf, PATTERN_LABELS, OE_LABELS } from '../utils/predict.js'
+import {
+  buildPrediction,
+  patternIdxOf,
+  oeCatOf,
+  PATTERN_LABELS,
+  OE_LABELS,
+  RECOMMENDATION_COUNT,
+} from '../utils/predict.js'
+
+/** 表格内联预览的注数 */
+const REC_INLINE_PREVIEW = 3
 import {
   computeAllPositionTransitions,
   formatTransitionPct,
@@ -20,16 +30,26 @@ const running = ref(false)
 const results = ref(null)
 
 // ── Helpers ───────────────────────────────────────────────
+function recDigits(rec) {
+  if (Array.isArray(rec)) return rec
+  return rec?.digits
+}
+
 function countDigitMatches(predicted, actual) {
+  if (!predicted?.length || !actual?.length) return 0
   return predicted.filter((d, i) => d === actual[i]).length
 }
 
 function isAnyComboExact(recs, actual) {
-  return recs.some((r) => r.digits.join(',') === actual.join(','))
+  return recs.some((r) => {
+    const digits = recDigits(r)
+    return digits?.length === 3 && digits.join(',') === actual.join(',')
+  })
 }
 
 function maxDigitMatch(recs, actual) {
-  return Math.max(...recs.map((r) => countDigitMatches(r.digits, actual)), 0)
+  if (!recs?.length) return 0
+  return Math.max(...recs.map((r) => countDigitMatches(recDigits(r), actual)), 0)
 }
 
 /** 下期：优先测试集内，否则从全量历史中取下一期 */
@@ -82,10 +102,13 @@ async function runBacktest() {
       if (pred) {
         const actualPatLabel = PATTERN_LABELS[patternIdxOf(testDraw)]
         const actualOELabel  = OE_LABELS[oeCatOf(testDraw)]
-        const patHit = pred.topPattern === actualPatLabel
+        const predPattern = pred.topPatterns?.[0]?.label ?? pred.topPattern ?? ''
+        const patHit = predPattern === actualPatLabel
         const oeHit  = pred.topOE === actualOELabel
-        const maxMatch = maxDigitMatch(pred.recommendations, testDraw.digits)
-        const exactHit = isAnyComboExact(pred.recommendations, testDraw.digits)
+        const bets = pred.twentySevenBets
+        const allRecs = bets?.combos?.filter((d) => Array.isArray(d) && d.length === 3) ?? []
+        const maxMatch = maxDigitMatch(allRecs, testDraw.digits)
+        const exactHit = isAnyComboExact(allRecs, testDraw.digits)
 
         rows.push({
           issue:         testDraw.issue,
@@ -95,9 +118,11 @@ async function runBacktest() {
           actualSpan:    Math.max(...testDraw.digits) - Math.min(...testDraw.digits),
           actualPattern: actualPatLabel,
           actualOE:      actualOELabel,
-          predPattern:   pred.topPattern,
+          predPattern:   bets?.pattern ?? predPattern,
           predOE:        pred.topOE,
-          recs:          pred.recommendations.map((r) => r.digits),
+          positionPicks: bets?.positionPicks ?? [],
+          patternFlags:  bets?.patternFlags ?? [],
+          recs:          allRecs,
           patHit,
           oeHit,
           bothHit:       patHit && oeHit,
@@ -171,6 +196,41 @@ function closeTransitionModal() {
   transitionModal.value = null
 }
 
+const recPopover = ref(null)
+let recPopoverHideTimer = null
+
+function openRecPopover(row, el) {
+  if (!row.recs?.length) return
+  clearTimeout(recPopoverHideTimer)
+  const rect = el.getBoundingClientRect()
+  recPopover.value = { row, anchor: rect }
+}
+
+function scheduleCloseRecPopover() {
+  clearTimeout(recPopoverHideTimer)
+  recPopoverHideTimer = setTimeout(() => {
+    recPopover.value = null
+  }, 120)
+}
+
+function cancelCloseRecPopover() {
+  clearTimeout(recPopoverHideTimer)
+}
+
+const recPopoverStyle = computed(() => {
+  const pop = recPopover.value
+  if (!pop) return {}
+  const { anchor } = pop
+  const gap = 10
+  return {
+    position: 'fixed',
+    top: `${anchor.top - gap}px`,
+    left: `${anchor.right}px`,
+    transform: 'translate(-100%, -100%)',
+    zIndex: 10000,
+  }
+})
+
 function transitionTopHit(pos) {
   if (!pos || pos.topDigit == null || !transitionModal.value?.hasNext) return false
   const next = transitionModal.value?.nextDigits?.[pos.key]
@@ -183,7 +243,7 @@ const statCards = computed(() => {
   return [
     { label: '上下形态命中', value: `${s.patAcc}%`, sub: `${s.patHits}/${results.value.testCount} 期`, baseline: '理论 12.5%', color: '#fbbf24' },
     { label: '奇偶比命中',   value: `${s.oeAcc}%`,  sub: `${s.oeHits}/${results.value.testCount} 期`,  baseline: '理论 25%',   color: '#22d3ee' },
-    { label: '形态+奇偶双中', value: `${s.bothAcc}%`, sub: `${s.bothHits}/${results.value.testCount} 期`, baseline: '理论 3.1%', color: '#a78bfa' },
+    { label: '形态+奇偶双中', value: `${s.bothAcc}%`, sub: `${s.bothHits}/${results.value.testCount} 期`, baseline: '理论 ~3%', color: '#a78bfa' },
     { label: '至少 1 位准', value: `${s.m1Acc}%`,  sub: `${s.match1}/${results.value.testCount} 期`,  baseline: '',           color: '#fb923c' },
     { label: '至少 2 位准', value: `${s.m2Acc}%`,  sub: `${s.match2}/${results.value.testCount} 期`,  baseline: '',           color: '#4ade80' },
     { label: '号码完全命中', value: `${s.m3Acc}%`, sub: `${s.match3}/${results.value.testCount} 期`,  baseline: '理论 0.2%',  color: '#f87171' },
@@ -256,8 +316,7 @@ const statCards = computed(() => {
               <th>跨度</th>
               <th>形态</th>
               <th>奇偶比</th>
-              <th>推荐号 ①</th>
-              <th>推荐号 ②</th>
+              <th class="col-rec">推荐号</th>
               <th>最多位匹配</th>
             </tr>
           </thead>
@@ -293,23 +352,43 @@ const statCards = computed(() => {
                   {{ row.actualOE }}<span class="pred-hint">(预测：{{ row.predOE }})</span>
                 </span>
               </td>
-              <td>
-                <span class="rec-digits">
-                  <span
-                    v-for="(d, i) in row.recs[0]"
-                    :key="i"
-                    :class="['rd', d === row.actual[i] ? 'rd-hit' : '']"
-                  >{{ d }}</span>
-                </span>
-              </td>
-              <td>
-                <span class="rec-digits" v-if="row.recs[1]">
-                  <span
-                    v-for="(d, i) in row.recs[1]"
-                    :key="i"
-                    :class="['rd', d === row.actual[i] ? 'rd-hit' : '']"
-                  >{{ d }}</span>
-                </span>
+              <td class="col-rec">
+                <div class="rec-cell">
+                  <div
+                    v-if="row.positionPicks?.length === 3"
+                    class="rec-pos-line"
+                  >
+                    <span
+                      v-for="(posLabel, pi) in ['百', '十', '个']"
+                      :key="posLabel"
+                      class="rec-pos-pick"
+                    >
+                      <span class="rec-pos-name">{{ posLabel }}</span>
+                      <span class="rec-pos-flag">{{ row.patternFlags[pi] }}</span>
+                      <span class="rec-pos-digits">{{ row.positionPicks[pi].join('') }}</span>
+                    </span>
+                  </div>
+                  <div class="rec-inline">
+                    <span
+                      v-for="(rec, ri) in row.recs.slice(0, REC_INLINE_PREVIEW)"
+                      :key="ri"
+                      class="rec-group"
+                    >
+                      <span
+                        v-for="(d, i) in rec"
+                        :key="i"
+                        :class="['rd', d === row.actual[i] ? 'rd-hit' : '']"
+                      >{{ d }}</span>
+                    </span>
+                    <span
+                      v-if="row.recs.length > REC_INLINE_PREVIEW"
+                      class="rec-more"
+                      aria-label="查看全部 27 注"
+                      @mouseenter="openRecPopover(row, $event.currentTarget)"
+                      @mouseleave="scheduleCloseRecPopover"
+                    >…</span>
+                  </div>
+                </div>
               </td>
               <td>
                 <span :class="['match-badge', `m${row.maxMatch}`]">{{ row.maxMatch }}</span>
@@ -319,6 +398,42 @@ const statCards = computed(() => {
         </table>
       </div>
     </template>
+
+    <!-- 推荐号全部匹配悬浮层 -->
+    <Teleport to="body">
+      <div
+        v-if="recPopover"
+        class="rec-popover"
+        role="tooltip"
+        :style="recPopoverStyle"
+        @mouseenter="cancelCloseRecPopover"
+        @mouseleave="scheduleCloseRecPopover"
+      >
+        <p class="rec-popover-title">
+          {{ recPopover.row.recs.length }} 注 · {{ recPopover.row.predPattern }}
+          <span class="rec-popover-hint">
+            百{{ recPopover.row.positionPicks[0]?.join('') }}
+            十{{ recPopover.row.positionPicks[1]?.join('') }}
+            个{{ recPopover.row.positionPicks[2]?.join('') }}
+          </span>
+        </p>
+        <div class="rec-popover-list">
+          <div
+            v-for="(rec, ri) in recPopover.row.recs"
+            :key="ri"
+            class="rec-popover-row"
+          >
+            <span class="rec-group">
+              <span
+                v-for="(d, i) in rec"
+                :key="i"
+                :class="['rd', d === recPopover.row.actual[i] ? 'rd-hit' : '']"
+              >{{ d }}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 转移概率弹窗 -->
     <Teleport to="body">
@@ -622,6 +737,7 @@ const statCards = computed(() => {
 
 .bt-table {
   width: 100%;
+  min-width: 960px;
   border-collapse: collapse;
   font-size: 12px;
 }
@@ -907,6 +1023,8 @@ const statCards = computed(() => {
 .tag.miss { background: rgba(148, 163, 184, 0.1);  color: #64748b; }
 .tag.oe.hit  { background: rgba(34, 211, 238, 0.15); color: #22d3ee; }
 .tag.oe.miss { background: rgba(148, 163, 184, 0.1);  color: #64748b; }
+.tag.oe-seq.hit  { background: rgba(45, 212, 191, 0.15); color: #2dd4bf; letter-spacing: 1px; }
+.tag.oe-seq.miss { background: rgba(148, 163, 184, 0.1);  color: #64748b; letter-spacing: 1px; }
 
 .badge {
   display: inline-flex;
@@ -920,7 +1038,138 @@ const statCards = computed(() => {
 .badge-hit  { background: rgba(74, 222, 128, 0.2); color: #4ade80; }
 .badge-miss { background: rgba(248, 113, 113, 0.15); color: #f87171; }
 
-.rec-digits { display: flex; justify-content: center; gap: 3px; }
+.bt-table .col-rec {
+  min-width: 380px;
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+.rec-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.rec-pos-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 10px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.rec-pos-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.rec-pos-name {
+  font-weight: 700;
+  color: #fbbf24;
+}
+
+.rec-pos-flag {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.rec-pos-digits {
+  font-family: var(--mono, monospace);
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #e2e8f0;
+}
+
+.rec-inline {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.rec-more {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fbbf24;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.rec-more:hover {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fde68a;
+}
+
+.rec-popover {
+  position: fixed;
+  width: min(880px, calc(100vw - 32px));
+  overflow: visible;
+  box-sizing: border-box;
+  padding: 16px 28px;
+  border-radius: 12px;
+  border: 1px solid #475569;
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  text-align: left;
+  pointer-events: auto;
+}
+
+.rec-popover::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 12px;
+}
+
+.rec-popover-title {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.rec-popover-hint {
+  font-weight: 400;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.rec-popover-list {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 8px 12px;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
+
+.rec-popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rec-group {
+  display: inline-flex;
+  gap: 3px;
+  padding: 2px 5px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  flex-shrink: 0;
+}
 .rd {
   display: inline-flex;
   align-items: center;
