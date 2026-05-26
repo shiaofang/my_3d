@@ -20,9 +20,35 @@ defineEmits(['mouseenter', 'mouseleave'])
 const rootEl = ref(null)
 defineExpose({ rootEl })
 
+const SUM_MIN = 0
+const SUM_MAX = 27
+
 const showZu3 = ref(true)
 const showZu6 = ref(true)
+const sumMin = ref(SUM_MIN)
+const sumMax = ref(SUM_MAX)
 const selectedPicks = ref([[], [], []])
+
+function comboSum(rec) {
+  return rec[0] + rec[1] + rec[2]
+}
+
+function onSumMinInput(e) {
+  const v = Number(e.target.value)
+  sumMin.value = Math.min(v, sumMax.value)
+}
+
+function onSumMaxInput(e) {
+  const v = Number(e.target.value)
+  sumMax.value = Math.max(v, sumMin.value)
+}
+
+const sumRangeTrackStyle = computed(() => {
+  const span = SUM_MAX - SUM_MIN || 1
+  const left = ((sumMin.value - SUM_MIN) / span) * 100
+  const right = ((SUM_MAX - sumMax.value) / span) * 100
+  return { left: `${left}%`, right: `${right}%` }
+})
 
 function digitsForPos(pi) {
   const flag = props.patternFlags[pi]
@@ -96,20 +122,27 @@ const activeCombos = computed(() => {
   return combos
 })
 
-const filteredRecs = computed(() =>
-  activeCombos.value.filter((rec) => {
+const filteredRecs = computed(() => {
+  const lo = Math.min(sumMin.value, sumMax.value)
+  const hi = Math.max(sumMin.value, sumMax.value)
+  return activeCombos.value.filter((rec) => {
+    const s = comboSum(rec)
+    if (s < lo || s > hi) return false
     const t = getNumberType(rec)
     if (t === '组三') return showZu3.value
     if (t === '组六') return showZu6.value
     return false
-  }),
-)
+  })
+})
 
 const emptyHint = computed(() => {
   if (selectedPicks.value.some((picks) => !picks.length)) {
     return '每位至少选 1 个号码'
   }
   if (!showZu3.value && !showZu6.value) return '未勾选任何形态'
+  if (sumMin.value > SUM_MIN || sumMax.value < SUM_MAX) {
+    if (!filteredRecs.value.length) return '当前和值范围无匹配号码'
+  }
   if (!filteredRecs.value.length) return '当前筛选无匹配号码'
   return ''
 })
@@ -132,6 +165,30 @@ const emptyHint = computed(() => {
             {{ filteredRecs.length }} 注 · {{ pattern }}
           </p>
           <div class="rec-type-filters">
+            <div class="rec-sum-range" title="和值范围">
+              <span class="rec-sum-label">和值</span>
+              <span class="rec-sum-value">{{ sumMin }}—{{ sumMax }}</span>
+              <div class="rec-sum-slider">
+                <div class="rec-sum-track" />
+                <div class="rec-sum-active" :style="sumRangeTrackStyle" />
+                <input
+                  type="range"
+                  class="rec-sum-thumb rec-sum-thumb-min"
+                  :min="SUM_MIN"
+                  :max="SUM_MAX"
+                  :value="sumMin"
+                  @input="onSumMinInput"
+                />
+                <input
+                  type="range"
+                  class="rec-sum-thumb rec-sum-thumb-max"
+                  :min="SUM_MIN"
+                  :max="SUM_MAX"
+                  :value="sumMax"
+                  @input="onSumMaxInput"
+                />
+              </div>
+            </div>
             <label class="rec-type-filter">
               <input v-model="showZu3" type="checkbox" />
               <span>组三</span>
@@ -258,6 +315,114 @@ const emptyHint = computed(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.rec-sum-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: rgba(30, 41, 59, 0.6);
+}
+
+.rec-sum-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.rec-sum-value {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fbbf24;
+  font-variant-numeric: tabular-nums;
+  min-width: 36px;
+  white-space: nowrap;
+}
+
+.rec-sum-slider {
+  position: relative;
+  width: 120px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.rec-sum-track {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 3px;
+  background: rgba(51, 65, 85, 0.8);
+}
+
+.rec-sum-active {
+  position: absolute;
+  top: 50%;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.35), rgba(251, 191, 36, 0.85));
+  pointer-events: none;
+}
+
+.rec-sum-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.rec-sum-thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #f8fafc;
+  border: 2px solid #fbbf24;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.rec-sum-thumb::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #f8fafc;
+  border: 2px solid #fbbf24;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.rec-sum-thumb::-webkit-slider-runnable-track {
+  background: transparent;
+  height: 6px;
+}
+
+.rec-sum-thumb::-moz-range-track {
+  background: transparent;
+  height: 6px;
+}
+
+.rec-sum-thumb-max {
+  z-index: 2;
+}
+
+.rec-sum-thumb-min {
+  z-index: 3;
 }
 
 .rec-type-filter {

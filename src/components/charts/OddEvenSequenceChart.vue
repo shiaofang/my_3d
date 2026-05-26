@@ -11,7 +11,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { avgMarkLine } from '../../utils/chartAvgMarkLine.js'
-import { cappedOmiBoost, OE_SEQUENCE_LABELS, oeSequenceIdxOf } from '../../utils/predict.js'
+import { OE_SEQUENCE_LABELS, cappedOmiBoost, oeSequenceIdxOf } from '../../utils/predict.js'
 
 use([BarChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, CanvasRenderer])
 
@@ -19,19 +19,18 @@ const props = defineProps({
   draws: { type: Array, default: () => [] },
 })
 
+const LABELS = OE_SEQUENCE_LABELS
+const THEORETICAL = 12.5
 const BASE_COLORS = [
-  '#22d3ee', '#06b6d4', '#2dd4bf', '#14b8a6',
-  '#38bdf8', '#0ea5e9', '#60a5fa', '#818cf8',
+  '#f59e0b', '#fb923c', '#a78bfa', '#818cf8',
+  '#34d399', '#22d3ee', '#60a5fa', '#3b82f6',
 ]
 
-const DAYS_OPTIONS = [8, 16, 24, 32, 40, 48]
+const DAYS_OPTIONS = [8, 16, 24, 32, 40, 48, 56]
 const selectedDays = ref(16)
-const THEOR_PCT = 100 / 8
 
 const filteredStats = computed(() => {
-  if (!props.draws.length) {
-    return OE_SEQUENCE_LABELS.map((label) => ({ label, count: 0 }))
-  }
+  if (!props.draws.length) return LABELS.map((label) => ({ label, count: 0 }))
 
   const cutoff = new Date()
   cutoff.setDate(cutoff.getDate() - selectedDays.value)
@@ -43,7 +42,7 @@ const filteredStats = computed(() => {
     if (isNaN(d.getTime()) || d < cutoff) continue
     counts[oeSequenceIdxOf(draw)]++
   }
-  return OE_SEQUENCE_LABELS.map((label, i) => ({ label, count: counts[i] }))
+  return LABELS.map((label, i) => ({ label, count: counts[i] }))
 })
 
 const totalDraws = computed(() => filteredStats.value.reduce((s, d) => s + d.count, 0))
@@ -73,7 +72,7 @@ const predictedPcts = computed(() => {
     return base * cappedOmiBoost(omi[i], 8)
   })
   const sumRaw = raws.reduce((a, b) => a + b, 0)
-  return raws.map((r) => (sumRaw > 0 ? (r / sumRaw) * 100 : THEOR_PCT))
+  return raws.map((r) => (sumRaw > 0 ? (r / sumRaw) * 100 : THEORETICAL))
 })
 
 function blendHex(hex1, hex2, t) {
@@ -109,16 +108,16 @@ const option = computed(() => {
         const cnt = stats[i].count
         const actualPct = total ? ((cnt / total) * 100).toFixed(1) : '0.0'
         const pred = pcts[i].toFixed(1)
-        const diff = (pcts[i] - THEOR_PCT).toFixed(1)
+        const diff = (pcts[i] - THEORETICAL).toFixed(1)
         const sign = Number(diff) >= 0 ? '+' : ''
-        const trend = pcts[i] < THEOR_PCT ? '▼ 低于理论' : '▲ 高于理论'
+        const trend = pcts[i] < THEORETICAL ? '▼ 低于理论' : '▲ 高于理论'
         const gap = omissions.value[i]
         const gapTxt = gap === 0 ? '上期刚出现' : `${gap} 期未出`
         return (
           `<b>${stats[i].label}</b> · 百→十→个<br/>` +
           `历史出现 <b style="color:${BASE_COLORS[i]}">${cnt}</b> 次　实际占比 ${actualPct}%<br/>` +
           `当前遗漏 <b style="color:#fb923c">${gapTxt}</b><br/>` +
-          `预测概率 <b style="color:${pcts[i] < THEOR_PCT - 2 ? '#f87171' : '#4ade80'}">${pred}%</b>　${trend} ${sign}${diff}%`
+          `预测概率 <b style="color:${pcts[i] < 10 ? '#f87171' : '#4ade80'}">${pred}%</b>　${trend} ${sign}${diff}%（理论 ${THEORETICAL}%）`
         )
       },
     },
@@ -136,7 +135,7 @@ const option = computed(() => {
         },
         rich: {
           name: { color: '#94a3b8', fontSize: 13, fontWeight: 'bold', lineHeight: 20, align: 'center' },
-          cnt:  { color: '#64748b', fontSize: 11, lineHeight: 15, align: 'center' },
+          cnt: { color: '#64748b', fontSize: 11, lineHeight: 15, align: 'center' },
         },
       },
       axisLine: { lineStyle: { color: '#334155' } },
@@ -157,7 +156,7 @@ const option = computed(() => {
         type: 'bar',
         data: stats.map((d, i) => {
           const p = pcts[i]
-          const excess = p - THEOR_PCT
+          const excess = p - THEORETICAL
           let color = BASE_COLORS[i]
           if (excess < -2) {
             color = blendHex(BASE_COLORS[i], '#ef4444', Math.min(0.55, Math.abs(excess) * 0.05))
@@ -185,7 +184,7 @@ const option = computed(() => {
             return `{pct|${p.value}%}\n{gap|遗漏 ${gap}}`
           },
           rich: {
-            pct: { color: '#22d3ee', fontSize: 13, fontWeight: 'bold', lineHeight: 18 },
+            pct: { color: '#fbbf24', fontSize: 13, fontWeight: 'bold', lineHeight: 18 },
             gap: { color: '#fb923c', fontSize: 11, fontWeight: 'bold', lineHeight: 16 },
           },
         },
@@ -239,9 +238,9 @@ const option = computed(() => {
   transition: all 0.18s;
   white-space: nowrap;
 }
-.day-btn:hover { border-color: #22d3ee; color: #22d3ee; }
+.day-btn:hover { border-color: #fbbf24; color: #fbbf24; }
 .day-btn.active {
-  background: linear-gradient(135deg, #22d3ee, #06b6d4);
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
   border-color: transparent;
   color: #0f172a;
   font-weight: 700;

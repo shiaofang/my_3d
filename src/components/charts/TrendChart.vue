@@ -10,6 +10,8 @@ import {
   DataZoomComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import { chartDataZoomPair, useZoomRangeLabels } from '../../utils/chartDataZoom.js'
+import ChartZoomRangeFooter from './ChartZoomRangeFooter.vue'
 
 use([LineChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, DataZoomComponent, CanvasRenderer])
 
@@ -20,8 +22,15 @@ const props = defineProps({
 const POSITION_COLORS = ['#ff6b6b', '#4ecdc4', '#ffd93d']
 const POSITION_NAMES = ['百位', '十位', '个位']
 
+const issues = computed(() => props.draws.map((d) => String(d.issue)))
+const dates = computed(() => props.draws.map((d) => d.kjdate))
+const { rangeLabels, onDataZoom, zoomStart, zoomEnd } = useZoomRangeLabels(
+  () => issues.value,
+  () => dates.value,
+  () => issues.value.length,
+)
+
 const option = computed(() => {
-  const issues = props.draws.map((d) => String(d.issue))
   const series = POSITION_NAMES.map((name, pos) => ({
     name,
     type: 'line',
@@ -59,11 +68,11 @@ const option = computed(() => {
       textStyle: { color: '#94a3b8' },
       top: 0,
     },
-    grid: { left: 52, right: 24, top: 48, bottom: 72, containLabel: true },
+    grid: { left: 52, right: 24, top: 48, bottom: 80, containLabel: true },
     xAxis: {
       type: 'category',
-      data: issues,
-      axisLabel: { color: '#64748b', rotate: 45, fontSize: 10, interval: Math.floor(issues.length / 12) },
+      data: issues.value,
+      axisLabel: { show: false },
       axisLine: { lineStyle: { color: '#334155' } },
     },
     yAxis: {
@@ -77,20 +86,33 @@ const option = computed(() => {
       axisTick: { show: true, lineStyle: { color: '#334155' } },
       splitLine: { lineStyle: { color: '#1e293b' } },
     },
-    dataZoom: [
-      { type: 'inside', start: Math.max(0, 100 - (80 / issues.length) * 100) },
-      { type: 'slider', start: Math.max(0, 100 - (80 / issues.length) * 100), height: 20, bottom: 8, borderColor: '#334155', fillerColor: 'rgba(251, 191, 36, 0.15)', handleStyle: { color: '#fbbf24' } },
-    ],
+    dataZoom: chartDataZoomPair({
+      issueCount: issues.value.length,
+      start: zoomStart.value,
+      end: zoomEnd.value,
+      color: '#fbbf24',
+      fillerColor: 'rgba(251, 191, 36, 0.15)',
+      insetLeft: 52,
+      insetRight: 40,
+    }),
     series,
   }
 })
 </script>
 
 <template>
-  <VChart :option="option" autoresize class="chart" />
+  <div class="chart-wrap">
+    <VChart :option="option" autoresize class="chart" @datazoom="onDataZoom" />
+    <ChartZoomRangeFooter :start="rangeLabels.start" :end="rangeLabels.end" />
+  </div>
 </template>
 
 <style scoped>
+.chart-wrap {
+  position: relative;
+  width: 100%;
+}
+
 .chart {
   width: 100%;
   height: 380px;

@@ -322,7 +322,7 @@ const statCards = computed(() => {
                     v-if="canShowTransition(row)"
                     type="button"
                     class="trans-btn"
-                    title="位置转移概率推测"
+                    title="下一期位置转移概率推测"
                     @click="openTransitionModal(row)"
                   >↗</button>
                 </span>

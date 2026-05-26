@@ -25,7 +25,7 @@ const BASE_COLORS = [
   '#34d399', '#22d3ee', '#60a5fa', '#3b82f6',
 ]
 
-const DAYS_OPTIONS = [8, 16, 24, 32, 40, 48]
+const DAYS_OPTIONS = [8, 16, 24, 32, 40, 48, 56]
 const selectedDays = ref(8)
 
 const filteredStats = computed(() => {

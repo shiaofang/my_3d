@@ -10,6 +10,8 @@ import {
   DataZoomComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import { chartDataZoomPair, useZoomRangeLabels } from '../../utils/chartDataZoom.js'
+import ChartZoomRangeFooter from './ChartZoomRangeFooter.vue'
 
 use([LineChart, BarChart, GridComponent, TooltipComponent, MarkLineComponent, DataZoomComponent, CanvasRenderer])
 
@@ -17,8 +19,15 @@ const props = defineProps({
   sumSeries: { type: Array, default: () => [] },
 })
 
+const issues = computed(() => props.sumSeries.map((d) => String(d.issue)))
+const dates = computed(() => props.sumSeries.map((d) => d.date))
+const { rangeLabels, onDataZoom, zoomStart, zoomEnd } = useZoomRangeLabels(
+  () => issues.value,
+  () => dates.value,
+  () => issues.value.length,
+)
+
 const option = computed(() => {
-  const issues = props.sumSeries.map((d) => String(d.issue))
   const sums = props.sumSeries.map((d) => d.sum)
   const avg = sums.length ? (sums.reduce((a, b) => a + b, 0) / sums.length).toFixed(1) : 0
 
@@ -46,11 +55,13 @@ const option = computed(() => {
         crossStyle: { color: 'rgba(255, 255, 255, 0.85)', width: 1, type: 'dashed' },
       },
     },
-    grid: { left: 56, right: 24, top: 32, bottom: 72 },
+    grid: { left: 56, right: 24, top: 32, bottom: 80 },
     xAxis: {
       type: 'category',
-      data: issues,
-      axisLabel: { color: '#64748b', rotate: 45, fontSize: 10, interval: Math.floor(issues.length / 12) },
+      data: issues.value,
+      axisLabel: {
+        show: false,
+      },
       axisLine: { lineStyle: { color: '#334155' } },
       axisPointer: {
         show: true,
@@ -80,10 +91,15 @@ const option = computed(() => {
         lineStyle: { color: 'rgba(255, 255, 255, 0.9)', width: 1, type: 'dashed' },
       },
     },
-    dataZoom: [
-      { type: 'inside', start: Math.max(0, 100 - (80 / issues.length) * 100) },
-      { type: 'slider', start: Math.max(0, 100 - (80 / issues.length) * 100), height: 20, bottom: 8, borderColor: '#334155', fillerColor: 'rgba(96, 165, 250, 0.15)', handleStyle: { color: '#60a5fa' } },
-    ],
+    dataZoom: chartDataZoomPair({
+      issueCount: issues.value.length,
+      start: zoomStart.value,
+      end: zoomEnd.value,
+      color: '#60a5fa',
+      fillerColor: 'rgba(96, 165, 250, 0.15)',
+      insetLeft: 56,
+      insetRight: 40,
+    }),
     series: [
       {
         name: '和值',
@@ -144,10 +160,18 @@ const option = computed(() => {
 </script>
 
 <template>
-  <VChart :option="option" autoresize class="chart" />
+  <div class="chart-wrap">
+    <VChart :option="option" autoresize class="chart" @datazoom="onDataZoom" />
+    <ChartZoomRangeFooter :start="rangeLabels.start" :end="rangeLabels.end" />
+  </div>
 </template>
 
 <style scoped>
+.chart-wrap {
+  position: relative;
+  width: 100%;
+}
+
 .chart {
   width: 100%;
   height: 380px;

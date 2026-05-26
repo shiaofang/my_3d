@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
+import { OE_SEQUENCE_LABELS, oddEvenSequenceOf } from '../utils/predict.js'
 
 defineProps({
   draws: { type: Array, default: () => [] },
@@ -7,6 +8,7 @@ defineProps({
 
 const TYPE_OPTIONS = ['不限', '豹子', '组三', '组六']
 const ODDEVEN_OPTIONS = ['不限', '3:0', '2:1', '1:2', '0:3']
+const OE_SEQUENCE_OPTIONS = ['不限', ...OE_SEQUENCE_LABELS]
 const PATTERN_OPTIONS = [
   '不限',
   '上上上', '上上下', '上下上', '上下下',
@@ -17,6 +19,7 @@ const SUM_MAX = 27
 
 const selectedType = ref('不限')
 const selectedOddEven = ref('不限')
+const selectedOddEvenSeq = ref('不限')
 const selectedPattern = ref('不限')
 const sumMin = ref(SUM_MIN)
 const sumMax = ref(SUM_MAX)
@@ -58,6 +61,7 @@ const filteredNumbers = computed(() => {
     const type = getType(digits)
     if (selectedType.value !== '不限' && type !== selectedType.value) continue
     if (selectedOddEven.value !== '不限' && oddEvenRatio(digits) !== selectedOddEven.value) continue
+    if (selectedOddEvenSeq.value !== '不限' && oddEvenSequenceOf(digits) !== selectedOddEvenSeq.value) continue
     if (selectedPattern.value !== '不限' && upDownPattern(digits) !== selectedPattern.value) continue
     list.push({
       key: n,
@@ -73,26 +77,28 @@ const filteredNumbers = computed(() => {
 function resetFilters() {
   selectedType.value = '不限'
   selectedOddEven.value = '不限'
+  selectedOddEvenSeq.value = '不限'
   selectedPattern.value = '不限'
   sumMin.value = SUM_MIN
   sumMax.value = SUM_MAX
 }
 
-function clampMin(v) {
-  let n = Number(v)
-  if (Number.isNaN(n)) n = SUM_MIN
-  n = Math.max(SUM_MIN, Math.min(SUM_MAX, n))
-  sumMin.value = n
-  if (sumMax.value < n) sumMax.value = n
+function onSumMinInput(e) {
+  const v = Number(e.target.value)
+  sumMin.value = Math.min(v, sumMax.value)
 }
 
-function clampMax(v) {
-  let n = Number(v)
-  if (Number.isNaN(n)) n = SUM_MAX
-  n = Math.max(SUM_MIN, Math.min(SUM_MAX, n))
-  sumMax.value = n
-  if (sumMin.value > n) sumMin.value = n
+function onSumMaxInput(e) {
+  const v = Number(e.target.value)
+  sumMax.value = Math.max(v, sumMin.value)
 }
+
+const sumRangeTrackStyle = computed(() => {
+  const span = SUM_MAX - SUM_MIN || 1
+  const left = ((sumMin.value - SUM_MIN) / span) * 100
+  const right = ((SUM_MAX - sumMax.value) / span) * 100
+  return { left: `${left}%`, right: `${right}%` }
+})
 </script>
 
 <template>
@@ -129,6 +135,21 @@ function clampMax(v) {
       </div>
 
       <div class="filter-row">
+        <span class="filter-label">奇偶排序</span>
+        <div class="chip-group">
+          <button
+            v-for="opt in OE_SEQUENCE_OPTIONS"
+            :key="opt"
+            class="chip"
+            :class="{ active: selectedOddEvenSeq === opt }"
+            @click="selectedOddEvenSeq = opt"
+          >
+            {{ opt }}
+          </button>
+        </div>
+      </div>
+
+      <div class="filter-row">
         <span class="filter-label">上下形态</span>
         <div class="chip-group">
           <button
@@ -146,24 +167,28 @@ function clampMax(v) {
       <div class="filter-row">
         <span class="filter-label">和值范围</span>
         <div class="sum-range">
-          <input
-            type="number"
-            class="sum-input"
-            :min="SUM_MIN"
-            :max="SUM_MAX"
-            :value="sumMin"
-            @input="clampMin($event.target.value)"
-          />
-          <span class="dash">—</span>
-          <input
-            type="number"
-            class="sum-input"
-            :min="SUM_MIN"
-            :max="SUM_MAX"
-            :value="sumMax"
-            @input="clampMax($event.target.value)"
-          />
-          <span class="hint">(0–27)</span>
+          <span class="sum-value">{{ sumMin }} — {{ sumMax }}</span>
+          <div class="sum-slider">
+            <div class="sum-track" />
+            <div class="sum-active" :style="sumRangeTrackStyle" />
+            <input
+              type="range"
+              class="sum-thumb sum-thumb-min"
+              :min="SUM_MIN"
+              :max="SUM_MAX"
+              :value="sumMin"
+              @input="onSumMinInput"
+            />
+            <input
+              type="range"
+              class="sum-thumb sum-thumb-max"
+              :min="SUM_MIN"
+              :max="SUM_MAX"
+              :value="sumMax"
+              @input="onSumMaxInput"
+            />
+          </div>
+          <span class="sum-bounds">{{ SUM_MIN }} — {{ SUM_MAX }}</span>
         </div>
         <button class="btn-reset" @click="resetFilters">重置</button>
       </div>
@@ -257,33 +282,108 @@ function clampMax(v) {
 .sum-range {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 14px;
+  flex: 1;
+  min-width: 280px;
+  max-width: 520px;
 }
 
-.sum-input {
-  width: 64px;
-  padding: 6px 10px;
-  background: rgba(30, 41, 59, 0.7);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text-h);
+.sum-value {
   font-size: 14px;
-  text-align: center;
+  font-weight: 600;
+  color: #fbbf24;
+  font-variant-numeric: tabular-nums;
   font-family: var(--mono);
+  min-width: 56px;
+  white-space: nowrap;
 }
 
-.sum-input:focus {
-  outline: none;
-  border-color: #fbbf24;
+.sum-slider {
+  position: relative;
+  flex: 1;
+  height: 28px;
+  min-width: 160px;
 }
 
-.dash {
-  color: var(--text);
+.sum-track {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 4px;
+  background: rgba(51, 65, 85, 0.8);
 }
 
-.hint {
+.sum-active {
+  position: absolute;
+  top: 50%;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.35), rgba(251, 191, 36, 0.9));
+  pointer-events: none;
+}
+
+.sum-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.sum-thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f8fafc;
+  border: 2px solid #fbbf24;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.sum-thumb::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f8fafc;
+  border: 2px solid #fbbf24;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.sum-thumb::-webkit-slider-runnable-track {
+  background: transparent;
+  height: 8px;
+}
+
+.sum-thumb::-moz-range-track {
+  background: transparent;
+  height: 8px;
+}
+
+.sum-thumb-max {
+  z-index: 2;
+}
+
+.sum-thumb-min {
+  z-index: 3;
+}
+
+.sum-bounds {
   font-size: 12px;
   color: #64748b;
+  white-space: nowrap;
 }
 
 .btn-reset {

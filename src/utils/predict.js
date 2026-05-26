@@ -394,6 +394,29 @@ function pickPatternCategory(draws, refDate) {
 
 /** 三位独立奇偶的理论分布：3:0 / 0:3 各 12.5%，2:1 / 1:2 各 37.5% */
 export const OE_THEORETICAL_PRIOR = [12.5, 37.5, 37.5, 12.5]
+export const OE_THEORETICAL_BLEND = 0.22
+
+function oeChartCategoryScore(count, expected, gap) {
+  const base =
+    count <= expected
+      ? Math.max(0.05, 2 * expected - count)
+      : Math.max(expected * 0.35, (expected * expected) / count)
+  return base * cappedOmiBoost(gap, 4)
+}
+
+/** 奇偶比图表「预测概率」：按各类理论期望次数计冷号分，并与先验混合，避免 3:0/0:3 因遗漏被抬得过高 */
+export function oddEvenChartPredictedPct(counts, total, gaps, priorBlend = OE_THEORETICAL_BLEND) {
+  if (total === 0) return [...OE_THEORETICAL_PRIOR]
+  const raws = counts.map((c, i) => {
+    const expected = (total * OE_THEORETICAL_PRIOR[i]) / 100
+    return oeChartCategoryScore(c, expected, gaps[i])
+  })
+  const sumRaw = raws.reduce((a, b) => a + b, 0)
+  const rawPcts = raws.map((r, i) =>
+    sumRaw > 0 ? (r / sumRaw) * 100 : OE_THEORETICAL_PRIOR[i],
+  )
+  return rawPcts.map((p, i) => (1 - priorBlend) * p + priorBlend * OE_THEORETICAL_PRIOR[i])
+}
 
 const OE_ENSEMBLE = {
   freqGap: 0.20,
@@ -402,7 +425,6 @@ const OE_ENSEMBLE = {
   markov: 0.20,
   chartWindow: 0.10,
 }
-const OE_THEORETICAL_BLEND = 0.22
 
 function empiricalOeProb(draws, refDate) {
   const { counts, total } = windowCounts(draws, 48, 4, oeCatOf, refDate)
@@ -568,6 +590,18 @@ function ensembleOeSequenceProb(draws, refDate) {
     return v
   })
   return normalizePct(blended)
+}
+
+/** 上下形态 8 类预测分布（%），供联合指标使用 */
+export function getPatternProbDistribution(draws, refDate) {
+  if (!draws.length) return new Array(8).fill(12.5)
+  return ensemblePatternProb(draws, refDate)
+}
+
+/** 奇偶排序 8 类预测分布（%），供联合指标使用 */
+export function getOeSequenceProbDistribution(draws, refDate) {
+  if (!draws.length) return new Array(8).fill(12.5)
+  return ensembleOeSequenceProb(draws, refDate)
 }
 
 function pickOeSequenceCategory(draws, refDate) {

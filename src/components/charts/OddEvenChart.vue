@@ -11,7 +11,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { avgMarkLine } from '../../utils/chartAvgMarkLine.js'
-import { cappedOmiBoost } from '../../utils/predict.js'
+import { OE_THEORETICAL_PRIOR, oddEvenChartPredictedPct } from '../../utils/predict.js'
 
 use([BarChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, CanvasRenderer])
 
@@ -23,10 +23,8 @@ const LABELS = ['3:0', '2:1', '1:2', '0:3']
 const DESCRIPTIONS = ['全奇', '两奇一偶', '一奇两偶', '全偶']
 const BASE_COLORS = ['#fbbf24', '#fb923c', '#60a5fa', '#22d3ee']
 
-const DAYS_OPTIONS = [8, 16, 24, 32, 40, 48]
+const DAYS_OPTIONS = [8, 16, 24, 32, 40, 48, 56]
 const selectedDays = ref(16)
-
-const THEOR_PCT = 100 / 4 // 25%
 
 function categoryOf(draw) {
   const odds = draw.digits.filter((d) => d % 2 === 1).length
@@ -69,15 +67,8 @@ const omissions = computed(() => {
 const predictedPcts = computed(() => {
   const stats = filteredStats.value
   const total = totalDraws.value
-  const avg = total / 4
-  const EPS = 0.05
-  const omi = omissions.value
-  const raws = stats.map((s, i) => {
-    const base = Math.max(EPS, 2 * avg - s.count)
-    return base * cappedOmiBoost(omi[i], 4)
-  })
-  const sumRaw = raws.reduce((a, b) => a + b, 0)
-  return raws.map((r) => (sumRaw > 0 ? (r / sumRaw) * 100 : THEOR_PCT))
+  const counts = stats.map((s) => s.count)
+  return oddEvenChartPredictedPct(counts, total, omissions.value)
 })
 
 function blendHex(hex1, hex2, t) {
@@ -113,16 +104,17 @@ const option = computed(() => {
         const cnt = stats[i].count
         const actualPct = total ? ((cnt / total) * 100).toFixed(1) : '0.0'
         const pred = pcts[i].toFixed(1)
-        const diff = (pcts[i] - THEOR_PCT).toFixed(1)
+        const theor = OE_THEORETICAL_PRIOR[i]
+        const diff = (pcts[i] - theor).toFixed(1)
         const sign = Number(diff) >= 0 ? '+' : ''
-        const trend = pcts[i] < THEOR_PCT ? '▼ 低于理论' : '▲ 高于理论'
+        const trend = pcts[i] < theor - 2 ? '▼ 低于理论' : '▲ 高于理论'
         const gap = omissions.value[i]
         const gapTxt = gap === 0 ? '上期刚出现' : `${gap} 期未出`
         return (
           `<b>${stats[i].label}</b> · ${stats[i].desc}<br/>` +
           `历史出现 <b style="color:${BASE_COLORS[i]}">${cnt}</b> 次　实际占比 ${actualPct}%<br/>` +
           `当前遗漏 <b style="color:#fb923c">${gapTxt}</b><br/>` +
-          `预测概率 <b style="color:${pcts[i] < THEOR_PCT - 2 ? '#f87171' : '#4ade80'}">${pred}%</b>　${trend} ${sign}${diff}%`
+          `预测概率 <b style="color:${pcts[i] < theor - 2 ? '#f87171' : '#4ade80'}">${pred}%</b>　${trend} ${sign}${diff}%（理论 ${theor}%）`
         )
       },
     },
@@ -154,7 +146,7 @@ const option = computed(() => {
       axisLabel: { color: '#64748b', fontSize: 11, formatter: '{value}%' },
       splitLine: { lineStyle: { color: '#1e293b', type: 'dashed' } },
       axisLine: { show: false },
-      max: (v) => Math.max(THEOR_PCT * 1.6, Math.ceil(v.max * 1.3)),
+      max: (v) => Math.max(45, Math.ceil(v.max * 1.3)),
     },
     series: [
       {
@@ -162,7 +154,7 @@ const option = computed(() => {
         type: 'bar',
         data: stats.map((d, i) => {
           const p = pcts[i]
-          const excess = p - THEOR_PCT
+          const excess = p - OE_THEORETICAL_PRIOR[i]
           let color = BASE_COLORS[i]
           if (excess < -3) {
             color = blendHex(BASE_COLORS[i], '#ef4444', Math.min(0.55, Math.abs(excess) * 0.035))
@@ -194,7 +186,7 @@ const option = computed(() => {
             gap: { color: '#fb923c', fontSize: 11, fontWeight: 'bold', lineHeight: 16 },
           },
         },
-        markLine: avgMarkLine(pcts),
+        markLine: avgMarkLine(OE_THEORETICAL_PRIOR),
       },
     ],
   }
@@ -214,7 +206,7 @@ const option = computed(() => {
         近 {{ d }} 天
       </button>
       <span class="period-count">
-        共 <b>{{ totalDraws }}</b> 期 &nbsp;·&nbsp; 理论每种 25%
+        共 <b>{{ totalDraws }}</b> 期 &nbsp;·&nbsp; 理论 3:0/0:3 各 12.5%，2:1/1:2 各 37.5%
       </span>
     </div>
 

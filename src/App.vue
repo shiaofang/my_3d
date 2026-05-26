@@ -7,9 +7,10 @@ import FrequencyChart from './components/charts/FrequencyChart.vue'
 import SumTrendChart from './components/charts/SumTrendChart.vue'
 import Chart3D from './components/charts/Chart3D.vue'
 import Combination3DChart from './components/charts/Combination3DChart.vue'
-import NumberTypeChart from './components/charts/NumberTypeChart.vue'
 import UpDownChart from './components/charts/UpDownChart.vue'
 import OddEvenChart from './components/charts/OddEvenChart.vue'
+import OddEvenSequenceChart from './components/charts/OddEvenSequenceChart.vue'
+import UpDownOeSequenceTrendChart from './components/charts/UpDownOeSequenceTrendChart.vue'
 import PredictionPanel from './components/PredictionPanel.vue'
 import BacktestPanel from './components/BacktestPanel.vue'
 import FilterPanel from './components/FilterPanel.vue'
@@ -133,7 +134,7 @@ onMounted(() => store.loadData())
       <div v-show="activeTab === 'filter'" class="tab-panel" role="tabpanel">
         <article class="card card-wide">
           <h2>条件筛选号码</h2>
-          <p class="card-desc">在 000–999 全部号码中，按形态、奇偶比、上下形态、和值范围组合筛选</p>
+          <p class="card-desc">在 000–999 全部号码中，按形态、奇偶比、奇偶排序、上下形态、和值范围组合筛选</p>
           <FilterPanel :draws="chronDraws" />
         </article>
       </div>
@@ -169,6 +170,12 @@ onMounted(() => store.loadData())
         </section>
 
         <section class="chart-grid">
+          <article class="card card-wide">
+            <h2>上下形态 · 奇偶排序走势</h2>
+            <p class="card-desc">横轴为期号；默认「共现对齐」：左轴 Gray 码排上下形态，右轴按历史共现对齐奇偶排序，两线靠近时可联动预测</p>
+            <UpDownOeSequenceTrendChart :draws="chronDraws" />
+          </article>
+
           <article class="card">
             <h2>上下形态分布</h2>
             <p class="card-desc">0–4 记「上」，5–9 记「下」，三位共 8 种形态 · 含预测概率与遗漏期数</p>
@@ -182,17 +189,16 @@ onMounted(() => store.loadData())
           </article>
 
           <article class="card">
+            <h2>奇偶排序预测概率</h2>
+            <p class="card-desc">百→十→个逐位奇偶排列（如奇奇偶、偶偶奇）共 8 种 · 含预测概率与遗漏期数</p>
+            <OddEvenSequenceChart :draws="chronDraws" />
+          </article>
+
+          <article class="card">
             <h2>和值走势</h2>
             <p class="card-desc">三位号码之和的变化曲线</p>
             <SumTrendChart :sum-series="sumSeries" />
           </article>
-
-          <article class="card">
-            <h2>组三 / 组六概率</h2>
-            <p class="card-desc">自动对比近 24/32 天与近 24/32 期，识别组三间隔规律后给出下期概率；悬停查看详情</p>
-            <NumberTypeChart :draws="chronDraws" />
-          </article>
-
 
           <article class="card card-wide">
             <h2>位置转移概率</h2>
