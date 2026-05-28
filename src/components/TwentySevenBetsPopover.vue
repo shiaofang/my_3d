@@ -2,8 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import { getNumberType } from '../utils/parser.js'
 
-const MAX_PICKS_PER_POS = 3
-
 const props = defineProps({
   anchor: { type: Object, default: null },
   pattern: { type: String, default: '' },
@@ -23,6 +21,7 @@ defineExpose({ rootEl })
 const SUM_MIN = 0
 const SUM_MAX = 27
 
+const showBaozi = ref(true)
 const showZu3 = ref(true)
 const showZu6 = ref(true)
 const sumMin = ref(SUM_MIN)
@@ -50,10 +49,8 @@ const sumRangeTrackStyle = computed(() => {
   return { left: `${left}%`, right: `${right}%` }
 })
 
-function digitsForPos(pi) {
-  const flag = props.patternFlags[pi]
-  return flag === '上' ? [0, 1, 2, 3, 4] : [5, 6, 7, 8, 9]
-}
+const UPPER_DIGITS = [0, 1, 2, 3, 4]
+const LOWER_DIGITS = [5, 6, 7, 8, 9]
 
 function initSelectedPicks() {
   if (props.positionPicks.length === 3) {
@@ -69,17 +66,12 @@ function isDigitSelected(pi, digit) {
   return selectedPicks.value[pi]?.includes(digit) ?? false
 }
 
-function isDigitDisabled(pi, digit) {
-  return !isDigitSelected(pi, digit)
-    && (selectedPicks.value[pi]?.length ?? 0) >= MAX_PICKS_PER_POS
-}
-
 function toggleDigit(pi, digit) {
   const picks = [...selectedPicks.value[pi]]
   const idx = picks.indexOf(digit)
   if (idx >= 0) {
     picks.splice(idx, 1)
-  } else if (picks.length < MAX_PICKS_PER_POS) {
+  } else {
     picks.push(digit)
     picks.sort((a, b) => a - b)
   }
@@ -129,6 +121,7 @@ const filteredRecs = computed(() => {
     const s = comboSum(rec)
     if (s < lo || s > hi) return false
     const t = getNumberType(rec)
+    if (t === '豹子') return showBaozi.value
     if (t === '组三') return showZu3.value
     if (t === '组六') return showZu6.value
     return false
@@ -139,7 +132,7 @@ const emptyHint = computed(() => {
   if (selectedPicks.value.some((picks) => !picks.length)) {
     return '每位至少选 1 个号码'
   }
-  if (!showZu3.value && !showZu6.value) return '未勾选任何形态'
+  if (!showBaozi.value && !showZu3.value && !showZu6.value) return '未勾选任何形态'
   if (sumMin.value > SUM_MIN || sumMax.value < SUM_MAX) {
     if (!filteredRecs.value.length) return '当前和值范围无匹配号码'
   }
@@ -190,6 +183,10 @@ const emptyHint = computed(() => {
               </div>
             </div>
             <label class="rec-type-filter">
+              <input v-model="showBaozi" type="checkbox" />
+              <span>豹子</span>
+            </label>
+            <label class="rec-type-filter">
               <input v-model="showZu3" type="checkbox" />
               <span>组三</span>
             </label>
@@ -210,26 +207,39 @@ const emptyHint = computed(() => {
           >
             <span class="rec-pos-name">{{ posLabel }}</span>
             <span class="rec-pos-flag">{{ patternFlags[pi] }}</span>
-            <div class="rec-pos-digit-list">
-              <label
-                v-for="d in digitsForPos(pi)"
-                :key="d"
-                class="rec-digit-pick"
-                :class="{
-                  checked: isDigitSelected(pi, d),
-                  disabled: isDigitDisabled(pi, d),
-                }"
-              >
-                <input
-                  type="checkbox"
-                  :checked="isDigitSelected(pi, d)"
-                  :disabled="isDigitDisabled(pi, d)"
-                  @change="toggleDigit(pi, d)"
-                />
-                <span>{{ d }}</span>
-              </label>
+            <div class="rec-pos-digit-grid">
+              <div class="rec-pos-digit-row">
+                <label
+                  v-for="d in UPPER_DIGITS"
+                  :key="d"
+                  class="rec-digit-pick"
+                  :class="{ checked: isDigitSelected(pi, d) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="isDigitSelected(pi, d)"
+                    @change="toggleDigit(pi, d)"
+                  />
+                  <span>{{ d }}</span>
+                </label>
+              </div>
+              <div class="rec-pos-digit-row">
+                <label
+                  v-for="d in LOWER_DIGITS"
+                  :key="d"
+                  class="rec-digit-pick"
+                  :class="{ checked: isDigitSelected(pi, d) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="isDigitSelected(pi, d)"
+                    @change="toggleDigit(pi, d)"
+                  />
+                  <span>{{ d }}</span>
+                </label>
+              </div>
             </div>
-            <span class="rec-pos-count">{{ selectedPicks[pi].length }}/{{ MAX_PICKS_PER_POS }}</span>
+            <span class="rec-pos-count">已选 {{ selectedPicks[pi].length }}</span>
           </div>
         </div>
       </div>
@@ -463,8 +473,8 @@ const emptyHint = computed(() => {
 
 .rec-pos-row {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  align-items: flex-start;
+  flex-wrap: nowrap;
   gap: 8px;
   padding: 6px 8px;
   border-radius: 8px;
@@ -484,12 +494,19 @@ const emptyHint = computed(() => {
   min-width: 14px;
 }
 
-.rec-pos-digit-list {
+.rec-pos-digit-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.rec-pos-digit-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
-  flex: 1;
 }
 
 .rec-digit-pick {
@@ -515,11 +532,6 @@ const emptyHint = computed(() => {
   color: #fbbf24;
 }
 
-.rec-digit-pick.disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
 .rec-digit-pick input {
   width: 12px;
   height: 12px;
@@ -528,15 +540,12 @@ const emptyHint = computed(() => {
   cursor: pointer;
 }
 
-.rec-digit-pick.disabled input {
-  cursor: not-allowed;
-}
-
 .rec-pos-count {
   font-size: 11px;
   font-weight: 600;
   color: #64748b;
   white-space: nowrap;
+  padding-top: 4px;
 }
 
 .rec-popover-list {
@@ -545,6 +554,23 @@ const emptyHint = computed(() => {
   gap: 8px 12px;
   padding: 0 4px;
   box-sizing: border-box;
+  max-height: min(280px, 45vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+.rec-popover-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.rec-popover-list::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.45);
+  border-radius: 3px;
+}
+
+.rec-popover-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.55);
 }
 
 .rec-popover-empty {
